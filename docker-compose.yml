@@ -1,0 +1,12 @@
+version: "3.9"
+
+services:
+  sentinel-alpha:
+    build: .
+    container_name: sentinel-alpha
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./logs:/app/logs
+    command: ["python", "main.py"]
