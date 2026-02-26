@@ -21,7 +21,7 @@ Sentinel-Alpha is a high-reliability trading agent designed for the **Base Netwo
 
 ## 5. Deployment Guide
 1.  **Directory:** Create `/mnt/user/appdata/sentinel-alpha`.
-2.  **Files:** Upload `main.py`, `Dockerfile`, `docker-compose.yml`, and `.env`.
+2.  **Files:** Upload `main.py`, `Dockerfile`, `requirements.txt`, `docker-compose.yml`, and `.env`.
 3.  **Permissions:** In the Coinbase CDP Dashboard, ensure API keys have:
     * `Wallet`: view, create, transfer
     * `Trading`: execute_trade, view_price
@@ -31,7 +31,7 @@ Sentinel-Alpha is a high-reliability trading agent designed for the **Base Netwo
 ## 6. Troubleshooting & Support
 | Issue | Common Cause | Resolution |
 | :--- | :--- | :--- |
-| **Container Crash** | Python library mismatch | Run `docker logs sentinel-alpha` to identify missing modules. |
+| **Container Crash** | Python library mismatch | Rebuild with pinned dependencies via `docker-compose build --no-cache` and review `docker logs sentinel-alpha`. |
 | **Access Denied** | Key permissions | Verify 'Base Sepolia' is checked in your CDP API Key settings. |
 | **No Price Data** | RPC Timeout | Ensure Unraid Firewall allows traffic to `flashbots.net`. |
 
