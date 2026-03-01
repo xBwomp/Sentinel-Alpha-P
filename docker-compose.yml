@@ -1,0 +1,8 @@
+services:
+  sentinel-alpha:
+    build: .
+    env_file: .env
+    volumes:
+      - ./trading_log.txt:/app/trading_log.txt
+      - ./wallet_data.json:/app/wallet_data.json
+    restart: unless-stopped
