@@ -1,0 +1,6 @@
+coinbase-agentkit
+pandas
+statsmodels
+python-dotenv
+numpy
+requests
