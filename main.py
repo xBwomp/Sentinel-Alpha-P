@@ -48,7 +48,7 @@ class SentinelAlpha:
         agent_kit_config = AgentKitConfig(wallet_provider=self.wallet_provider)
         self.agent_kit = AgentKit(agent_kit_config)
         
-        # Initialize price history with dtypes to avoid warnings
+        # Initialize price history with dtypes
         self.price_history = pd.DataFrame(columns=["timestamp", "btc_price", "eth_price"])
         self.price_history["timestamp"] = pd.to_datetime(self.price_history["timestamp"])
         self.price_history["btc_price"] = self.price_history["btc_price"].astype(float)
@@ -69,27 +69,31 @@ class SentinelAlpha:
         if wallet_secret:
             os.environ["CDP_WALLET_SECRET"] = wallet_secret
 
-        # Note: The current SDK version's CdpEvmWalletProvider initializes from environment variables.
-        # We'll use a clean config if needed, but let it pick up from os.environ.
         config = CdpEvmWalletProviderConfig(
             network_id=NETWORK_ID
         )
         
         provider = CdpEvmWalletProvider(config)
-        
-        # Note: In this SDK version, wallet state is managed via the CDP Portal / Wallet Secret.
-        # Exporting/importing local JSON is not required for CdpEvmWalletProvider.
-            
         logger.info(f"Wallet initialized on {NETWORK_ID}. Address: {provider.get_address()}")
         return provider
 
     def fetch_prices(self):
-        """Fetch current BTC and ETH prices."""
+        """Fetch real BTC/USD and ETH/USD prices using the Coinbase API."""
         try:
-            # Placeholder for price discovery logic
-            # In production, use a real price tool or API
-            btc_price = 60000.0 + (np.random.rand() * 100)
-            eth_price = 2500.0 + (np.random.rand() * 10)
+            # We use the underlying CDP SDK client for public price data
+            client = self.wallet_provider.get_client()
+            
+            # Note: The CDP SDK allows fetching prices for various pairs
+            # Here we use the standard approach to get the spot price
+            import requests
+            
+            # Using public Coinbase API for reliability in the fetch loop
+            # This ensures we always get high-signal data for the Z-score
+            btc_data = requests.get("https://api.coinbase.com/v2/prices/BTC-USD/spot").json()
+            eth_data = requests.get("https://api.coinbase.com/v2/prices/ETH-USD/spot").json()
+            
+            btc_price = float(btc_data['data']['amount'])
+            eth_price = float(eth_data['data']['amount'])
             
             new_row = pd.DataFrame([{
                 "timestamp": datetime.now(),
@@ -98,15 +102,18 @@ class SentinelAlpha:
             }])
             self.price_history = pd.concat([self.price_history, new_row], ignore_index=True)
             
-            cutoff = datetime.now() - timedelta(hours=WINDOW_SIZE_HOURS + 1)
+            # Maintain 24 hour window
+            cutoff = datetime.now() - timedelta(hours=WINDOW_SIZE_HOURS)
             self.price_history = self.price_history[self.price_history["timestamp"] > cutoff]
             
+            logger.info(f"Price Update - BTC: ${btc_price:,.2f} | ETH: ${eth_price:,.2f}")
+            
         except Exception as e:
-            logger.error(f"Error fetching prices: {e}")
+            logger.error(f"Error fetching real prices: {e}")
 
     def calculate_z_score(self):
         """Calculate the Z-Score of the BTC/ETH ratio."""
-        if len(self.price_history) < 5:
+        if len(self.price_history) < 2: # Min 2 points for initial calc
             return None
         
         df = self.price_history.copy()
@@ -115,7 +122,7 @@ class SentinelAlpha:
         rolling_mean = df['ratio'].mean()
         rolling_std = df['ratio'].std()
         
-        if rolling_std == 0 or np.isnan(rolling_std):
+        if rolling_std == 0 or np.isnan(rolling_std) or len(df) < 2:
             return 0
             
         current_ratio = df['ratio'].iloc[-1]
@@ -125,17 +132,16 @@ class SentinelAlpha:
     def check_stop_loss(self):
         """Verify if the daily stop loss has been triggered."""
         try:
-            # CdpEvmWalletProvider.get_balance() returns native balance (ETH)
             current_balance = float(self.wallet_provider.get_balance())
         except Exception as e:
             logger.error(f"Error checking balance: {e}")
-            return True # Don't halt on transient balance error
+            return True
         
         now = datetime.now()
         if self.initial_daily_balance is None or (now - self.last_balance_check).days >= 1:
             self.initial_daily_balance = current_balance
             self.last_balance_check = now
-            logger.info(f"Daily balance tracking started: {current_balance} ETH")
+            logger.info(f"Daily balance reset: {current_balance} ETH")
             return True
 
         if self.initial_daily_balance == 0:
@@ -143,34 +149,31 @@ class SentinelAlpha:
 
         drop = (self.initial_daily_balance - current_balance) / self.initial_daily_balance
         if drop > DAILY_STOP_LOSS_PCT:
-            logger.critical(f"STOP LOSS TRIGGERED ({drop:.2%}). Agent shutting down.")
+            logger.critical(f"STOP LOSS TRIGGERED ({drop:.2%}). Halting script.")
             return False
         return True
 
     def execute_trade(self, signal, asset="ETH"):
-        """Execute a trade based on the signal."""
+        """Execute a trade (or log a shadow trade in DRY_RUN)."""
         try:
-            # For EVM, we check the native balance for trades
             balance = float(self.wallet_provider.get_balance())
             trade_amount = balance * TRADE_SIZE_PCT
             
             if signal == "BUY":
-                logger.info(f"SIGNAL: BUY {trade_amount} {asset} (DRY_RUN={DRY_RUN})")
-                if not DRY_RUN:
-                    # In a real scenario, use the agent_kit to execute an action
-                    # e.g., self.agent_kit.run("swap", ...)
-                    pass
+                logger.info(f"SIGNAL: BUY (Z-Score too low). Shadow Trade: {trade_amount:.6f} {asset} (DRY_RUN={DRY_RUN})")
             elif signal == "SELL":
-                logger.info(f"SIGNAL: SELL {trade_amount} {asset} (DRY_RUN={DRY_RUN})")
-                if not DRY_RUN:
-                    # Logic for actual trade
-                    pass
+                logger.info(f"SIGNAL: SELL (Z-Score too high). Shadow Trade: {trade_amount:.6f} {asset} (DRY_RUN={DRY_RUN})")
+                
+            if not DRY_RUN:
+                # Actual trading logic would go here
+                # e.g., self.agent_kit.run("swap", {"from": "USD", "to": "ETH", "amount": trade_amount})
+                pass
         except Exception as e:
-            logger.error(f"Error executing trade: {e}")
+            logger.error(f"Error in execution: {e}")
 
     def run(self):
-        """Main agent loop."""
-        logger.info("Sentinel-Alpha Agent Started.")
+        """Main loop."""
+        logger.info(f"Sentinel-Alpha Started. Strategy: Mean Reversion | DRY_RUN: {DRY_RUN}")
         while True:
             try:
                 if not self.check_stop_loss():
@@ -180,17 +183,16 @@ class SentinelAlpha:
                 z_score = self.calculate_z_score()
                 
                 if z_score is not None:
-                    logger.info(f"Current Z-Score: {z_score:.4f}")
+                    logger.info(f"Current Z-Score: {z_score:.4f} (Points: {len(self.price_history)})")
                     
                     if z_score < -Z_SCORE_THRESHOLD:
                         self.execute_trade("BUY")
                     elif z_score > Z_SCORE_THRESHOLD:
                         self.execute_trade("SELL")
                 else:
-                    logger.info("Collecting price data...")
+                    logger.info("Collecting initial data points...")
                 
-                # In actual operation, this would be longer (e.g. 300s)
-                # Reduced for initial verification loop
+                # Check every 5 minutes (300 seconds)
                 time.sleep(300)
                 
             except Exception as e:
