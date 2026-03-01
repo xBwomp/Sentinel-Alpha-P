@@ -1,6 +1,7 @@
 .env
 *.json
 *.txt
+!requirements.txt
 *.pyc
 __pycache__/
 test_key.py

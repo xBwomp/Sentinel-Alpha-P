@@ -3,10 +3,7 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # Install system dependencies if needed
-RUN apt-get update && apt-get install -y --no-install-recommends 
-    gcc 
-    python3-dev 
-    && rm -rf /var/lib/apt/lists/*
+# (Removed gcc and python3-dev as standard wheels are available for the required packages)
 
 # Install Python dependencies
 COPY requirements.txt .
