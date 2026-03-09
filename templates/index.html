@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sentinel-Alpha Dashboard</title>
+    <style>
+        :root {
+            --bg: #0f172a;
+            --card: #1e293b;
+            --primary: #3b82f6;
+            --text: #f8fafc;
+            --muted: #94a3b8;
+            --accent: #10b981;
+            --danger: #ef4444;
+        }
+
+        *, *::before, *::after { box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            margin: 0;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .container {
+            max-width: 1000px;
+            width: 100%;
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 24px;
+        }
+
+        h1 { margin: 0; font-size: 1.4rem; }
+        .status-badge {
+            background: rgba(16, 185, 129, 0.2);
+            color: var(--accent);
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.875rem;
+            font-weight: 600;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+
+        @media (min-width: 600px) {
+            .grid { grid-template-columns: repeat(2, 1fr); }
+        }
+
+        @media (min-width: 900px) {
+            .grid { grid-template-columns: repeat(3, 1fr); }
+            .perf-grid { grid-template-columns: repeat(4, 1fr); }
+        }
+
+        @media (min-width: 600px) and (max-width: 899px) {
+            .perf-grid { grid-template-columns: repeat(2, 1fr); }
+        }
+
+        .card {
+            background: var(--card);
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);
+        }
+
+        .label { color: var(--muted); font-size: 0.875rem; margin-bottom: 8px; }
+        .value { font-size: 1.25rem; font-weight: 700; }
+        .unit { font-size: 0.875rem; font-weight: 400; color: var(--muted); }
+
+        .explanation-card {
+            background: var(--primary);
+            color: white;
+            margin-bottom: 30px;
+        }
+
+        .explanation-card p { margin: 10px 0 0 0; line-height: 1.5; font-size: 1.1rem; }
+
+        .log-container {
+            background: var(--card);
+            border-radius: 12px;
+            padding: 20px;
+            max-height: 500px;
+            overflow-y: auto;
+        }
+
+        .log-entry {
+            font-family: "SFMono-Regular", Consolas, monospace;
+            font-size: 0.8125rem;
+            padding: 4px 0;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+            color: var(--muted);
+        }
+
+        .log-entry:last-child { border: none; }
+        .log-entry.signal { color: var(--accent); font-weight: bold; }
+        .log-entry.error { color: var(--danger); }
+
+        .refresh-hint {
+            text-align: center;
+            color: var(--muted);
+            font-size: 0.75rem;
+            margin-top: 20px;
+        }
+
+        .z-score-meter {
+            height: 8px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 4px;
+            margin: 10px 0;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .z-score-fill {
+            height: 100%;
+            background: var(--primary);
+            transition: width 0.3s ease;
+        }
+
+        .positive { color: var(--accent); }
+        .negative { color: var(--danger); }
+        .neutral  { color: var(--muted); }
+
+        .big-stat {
+            font-size: 1.5rem;
+            font-weight: 700;
+            line-height: 1.2;
+        }
+
+        .sub-label {
+            color: var(--muted);
+            font-size: 0.75rem;
+            margin-top: 6px;
+        }
+    </style>
+    <script>
+        setTimeout(() => location.reload(), 30000);
+    </script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Sentinel-Alpha :: Monitoring</h1>
+            <div class="status-badge">{{ "DRY RUN MODE" if dry_run else "LIVE" }}</div>
+        </header>
+
+        <div class="card explanation-card">
+            <div class="label" style="color: rgba(255,255,255,0.8)">CURRENT STATUS (PLAIN ENGLISH)</div>
+            <p>{{ status_explanation }}</p>
+        </div>
+
+        <div class="grid">
+            <div class="card">
+                <div class="label">WALLET BALANCE</div>
+                <div class="value">{{ "%.6f"|format(balance) }} <span class="unit">ETH</span> <span class="unit" style="font-size:0.75rem;">${{ "{:,.2f}".format(balance * eth_price) }}</span></div>
+                <div class="value" style="margin-top: 5px;">{{ "%.8f"|format(cbbtc_balance) }} <span class="unit">cbBTC</span> <span class="unit" style="font-size:0.75rem;">${{ "{:,.2f}".format(cbbtc_balance * btc_price) }}</span></div>
+                <div class="label" style="margin-top: 10px; font-size: 0.7rem; word-break: break-all;">{{ address }}</div>
+            </div>
+            <div class="card">
+                <div class="label">MARKET: BTC/USD</div>
+                <div class="value">${{ "{:,.2f}".format(btc_price) }}</div>
+                <div class="label" style="margin-top: 10px;">MARKET: ETH/USD</div>
+                <div class="value">${{ "{:,.2f}".format(eth_price) }}</div>
+            </div>
+            <div class="card">
+                <div class="label">STRATEGY: Z-SCORE ({{ z_score_points }} pts)</div>
+                <div class="value">{{ "%.4f"|format(z_score) }}</div>
+                <div class="z-score-meter">
+                    <div class="z-score-fill" style="width: {{ z_score_pct }}%; background: {{ z_score_color }};"></div>
+                </div>
+                <div class="label" style="font-size: 0.7rem;">Target: ±{{ z_threshold }}</div>
+            </div>
+        </div>
+
+        {% if perf.has_data %}
+        <div class="grid perf-grid" style="margin-bottom: 30px;">
+
+            <div class="card">
+                <div class="label">TODAY'S ACTIVITY</div>
+                <div class="big-stat">{{ perf.trades_today }}</div>
+                <div class="sub-label">trades executed</div>
+                <div style="margin-top: 10px; font-size: 0.875rem; color: var(--muted);">
+                    {{ perf.ignored_today }} signal{{ 's' if perf.ignored_today != 1 else '' }} ignored
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="label">7-DAY WIN RATE</div>
+                {% if perf.win_rate_7d is not none %}
+                <div class="big-stat {{ 'positive' if perf.win_rate_7d >= 50 else 'negative' }}">
+                    {{ "%.0f"|format(perf.win_rate_7d) }}%
+                </div>
+                <div class="sub-label">{{ perf.completed_pairs_7d }} round trip{{ 's' if perf.completed_pairs_7d != 1 else '' }}</div>
+                {% else %}
+                <div class="big-stat neutral">—</div>
+                <div class="sub-label">no completed pairs yet</div>
+                {% endif %}
+            </div>
+
+            <div class="card">
+                <div class="label">7-DAY PORTFOLIO</div>
+                {% if perf.portfolio_return_7d is not none %}
+                <div class="big-stat {{ 'positive' if perf.portfolio_return_7d >= 0 else 'negative' }}">
+                    {{ "%+.2f"|format(perf.portfolio_return_7d) }}%
+                </div>
+                <div class="sub-label">ETH-equiv return</div>
+                {% else %}
+                <div class="big-stat neutral">—</div>
+                <div class="sub-label">insufficient history</div>
+                {% endif %}
+            </div>
+
+            <div class="card">
+                <div class="label">OPEN POSITION</div>
+                {% if perf.open_position %}
+                <div class="big-stat" style="font-size: 1.1rem;">
+                    BUY @ {{ "%.3f"|format(perf.open_position.entry_ratio) }}
+                </div>
+                {% if perf.unrealized_pnl is not none %}
+                <div style="margin-top: 6px; font-weight: 700; font-size: 1rem;"
+                     class="{{ 'positive' if perf.unrealized_pnl >= 0 else 'negative' }}">
+                    {{ "%+.3f"|format(perf.unrealized_pnl) }}% unrealized
+                </div>
+                {% endif %}
+                <div class="sub-label">entry BTC ${{ "{:,.0f}".format(perf.open_position.entry_btc_price) }}</div>
+                {% else %}
+                <div class="big-stat neutral" style="font-size: 1.1rem;">Flat</div>
+                <div class="sub-label">no open position</div>
+                {% endif %}
+            </div>
+
+        </div>
+        {% endif %}
+
+        <div class="log-container">
+            <div class="label" style="margin-bottom: 15px;">RECENT LOG HISTORY (LAST 50)</div>
+            {% for entry in logs %}
+            <div class="log-entry {{ 'signal' if 'SIGNAL' in entry else ('error' if 'ERROR' in entry or 'CRITICAL' in entry else '') }}">
+                {{ entry }}
+            </div>
+            {% endfor %}
+        </div>
+
+        <div class="refresh-hint">Auto-refreshing every 30 seconds</div>
+    </div>
+</body>
+</html>
