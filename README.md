@@ -94,8 +94,8 @@ python backtest.py --help                   # full option list
 - **Dollar-cost-average mode** — split large signals into N smaller trades over M minutes to reduce slippage, controlled by `DCA_SPLITS` and `DCA_INTERVAL_SECONDS` env vars.
 
 ### Dashboard / UX
-- **Live Z-score sparkline** — plot the last 24h of Z-scores as a time series using Chart.js (data already available from `trades.json`).
-- **Trade history table** — show last N trades with signal, Z-score, price, amount, and P&L (data already in `trades.json`).
+- ~~**Live Z-score sparkline** — plot the last 24h of Z-scores as a time series using Chart.js (data already available from `trades.json`).~~ ✅
+- ~~**Trade history table** — show last N trades with signal, Z-score, price, amount, and P&L (data already in `trades.json`).~~ ✅
 - **Mobile-friendly layout** — refactor the current 3/4-column grid to collapse gracefully on small screens.
 
 ## Contributing
