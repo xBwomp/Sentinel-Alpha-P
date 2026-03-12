@@ -4,5 +4,6 @@
 !requirements.txt
 *.pyc
 __pycache__/
+myenv/
 test_key.py
 cdp_wallet_secret.txt
