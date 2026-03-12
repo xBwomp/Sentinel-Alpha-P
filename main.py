@@ -39,6 +39,8 @@ TRADE_SIZE_PCT = float(os.getenv("TRADE_SIZE_PCT", 0.10))
 TRADE_SIZE_MAX_PCT = float(os.getenv("TRADE_SIZE_MAX_PCT", 0.40))
 DAILY_STOP_LOSS_PCT = float(os.getenv("DAILY_STOP_LOSS_PCT", 0.05))
 NETWORK_ID = os.getenv("NETWORK_ID", "base-sepolia")
+RPC_URL = os.getenv("RPC_URL", None)
+SWAP_SLIPPAGE_BPS = int(os.getenv("SWAP_SLIPPAGE_BPS", 200))
 TRADES_FILE = os.getenv("TRADES_FILE", "trades.json")
 DAILY_SUMMARY_FILE = os.getenv("DAILY_SUMMARY_FILE", "daily_summary.json")
 
@@ -197,7 +199,8 @@ class SentinelAlpha:
         config = CdpEvmWalletProviderConfig(
             network_id=NETWORK_ID,
             address=wallet_address,
-            idempotency_key="sentinel_alpha_main_wallet"
+            idempotency_key="sentinel_alpha_main_wallet",
+            rpc_url=RPC_URL,
         )
         provider = CdpEvmWalletProvider(config)
 
@@ -368,6 +371,55 @@ class SentinelAlpha:
         excess = abs(z_score) - Z_SCORE_THRESHOLD
         scale = max(0.0, min(1.0, excess / Z_SCORE_THRESHOLD))
         return TRADE_SIZE_PCT + scale * (TRADE_SIZE_MAX_PCT - TRADE_SIZE_PCT)
+
+    # ── Permit2 approval ──────────────────────────────────────────────────────
+
+    PERMIT2_ADDRESS = "0x000000000022D473030F116dDEE9F6B43aC78BA3"
+    ERC20_ALLOWANCE_ABI = [
+        {"inputs":[{"name":"owner","type":"address"},{"name":"spender","type":"address"}],
+         "name":"allowance","outputs":[{"name":"","type":"uint256"}],"stateMutability":"view","type":"function"},
+        {"inputs":[{"name":"spender","type":"address"},{"name":"amount","type":"uint256"}],
+         "name":"approve","outputs":[{"name":"","type":"bool"}],"stateMutability":"nonpayable","type":"function"},
+    ]
+
+    def _ensure_permit2_approval(self, token_address: str) -> bool:
+        """Ensure token has max Permit2 allowance. Returns True if already approved or approval succeeded."""
+        if token_address == NATIVE_ETH:
+            return True
+        try:
+            w3 = self.wallet_provider._web3
+            wallet = self.wallet_provider.get_address()
+            contract = w3.eth.contract(
+                address=Web3.to_checksum_address(token_address),
+                abi=self.ERC20_ALLOWANCE_ABI,
+            )
+            allowance = contract.functions.allowance(
+                Web3.to_checksum_address(wallet),
+                Web3.to_checksum_address(self.PERMIT2_ADDRESS),
+            ).call()
+            if allowance > 0:
+                return True
+            logger.info(f"Approving {token_address} for Permit2 (allowance=0)...")
+            approve_data = contract.encodeABI(
+                fn_name="approve",
+                args=[Web3.to_checksum_address(self.PERMIT2_ADDRESS), 2**256 - 1],
+            )
+            tx_hash = self.wallet_provider.send_transaction({
+                "to": Web3.to_checksum_address(token_address),
+                "data": approve_data,
+                "value": 0,
+            })
+            receipt = self.wallet_provider.wait_for_transaction_receipt(tx_hash)
+            status = receipt.get("status", 0) if isinstance(receipt, dict) else getattr(receipt, "status", 0)
+            if status in (1, "success"):
+                logger.info(f"Permit2 approval confirmed for {token_address} | tx: {tx_hash}")
+                return True
+            else:
+                logger.error(f"Permit2 approval failed for {token_address} | tx: {tx_hash}")
+                return False
+        except Exception as e:
+            logger.error(f"Error ensuring Permit2 approval for {token_address}: {e}")
+            return False
 
     # ── Portfolio ─────────────────────────────────────────────────────────────
 
@@ -644,6 +696,10 @@ class SentinelAlpha:
             actual_to   = None
 
             if not DRY_RUN:
+                # Ensure Permit2 allowance for ERC-20 sells before swapping
+                if signal == "SELL" and not self._ensure_permit2_approval(from_token):
+                    logger.error(f"[{pair.name}] Aborting swap: could not approve {from_token} for Permit2.")
+                    return
                 swap_tool = self._get_action("swap")
                 if not swap_tool:
                     logger.error(f"Swap tool not found. Available: {list(self.actions.keys())}")
@@ -651,7 +707,8 @@ class SentinelAlpha:
                 result_str = swap_tool.invoke({
                     "from_token": from_token,
                     "to_token": to_token,
-                    "from_amount": str(trade_amount)
+                    "from_amount": str(trade_amount),
+                    "slippage_bps": SWAP_SLIPPAGE_BPS,
                 })
                 try:
                     result = json.loads(result_str)
