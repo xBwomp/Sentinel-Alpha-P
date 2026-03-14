@@ -22,6 +22,10 @@ NETWORK_ID = os.getenv("NETWORK_ID", "base-mainnet")
 DRY_RUN = os.getenv("DRY_RUN", "true").lower() == "true"
 Z_THRESHOLD = float(os.getenv("Z_SCORE_THRESHOLD", 2.0))
 WINDOW_SIZE_HOURS = int(os.getenv("WINDOW_SIZE_HOURS", 24))
+AAVE_ENABLED      = os.getenv("AAVE_ENABLED", "false").lower() == "true"
+AAVE_AWETH_ADDRESS = os.getenv("AAVE_AWETH_ADDRESS", "0xD4a0e0b9149BCee3C920d2E00b5dE09138fd8bb7")
+AAVE_ETH_RESERVE  = float(os.getenv("AAVE_ETH_RESERVE", "0.001"))
+AAVE_MIN_DEPOSIT  = float(os.getenv("AAVE_MIN_DEPOSIT", "0.005"))
 
 # Constants for Balance Checking
 RPC_URLS = {
@@ -116,20 +120,28 @@ def get_performance_metrics():
         if sv > 0:
             portfolio_return_7d = (ev - sv) / sv * 100
 
-    # Open position: last unmatched BUY across all time
-    open_position = None
-    last_buy = None
+    # Open position: last unmatched BUY tracked per-pair independently
+    last_buy_per_pair = {}
     for t in sorted(trades, key=lambda x: x["timestamp"]):
+        pair_name = t.get("pair", "BTC/ETH")
         if t["signal"] == "BUY":
-            last_buy = t
+            last_buy_per_pair[pair_name] = t
         elif t["signal"] == "SELL":
-            last_buy = None
-    if last_buy:
-        open_position = {
-            "entry_ratio": last_buy["ratio"],
-            "entry_btc_price": last_buy["btc_price"],
-            "timestamp": last_buy["timestamp"],
+            last_buy_per_pair.pop(pair_name, None)
+
+    # Pick the most recently opened position across all pairs
+    open_position = None
+    for pair_name, t in last_buy_per_pair.items():
+        base_price = t.get("base_price") or t.get("btc_price") or 0
+        candidate = {
+            "pair": pair_name,
+            "base_symbol": pair_name.split("/")[0],
+            "entry_ratio": t["ratio"],
+            "entry_base_price": base_price,
+            "timestamp": t["timestamp"],
         }
+        if open_position is None or t["timestamp"] > open_position["timestamp"]:
+            open_position = candidate
 
     return {
         "has_data": len(trades) > 0,
@@ -153,6 +165,7 @@ def get_wallet_address():
     return "Unknown"
 
 _balance_cache: dict = {"data": None, "ts": 0.0}
+_aave_cache: dict = {"data": None, "ts": 0.0}
 
 def get_balances(address):
     if _balance_cache["data"] is not None and (time.time() - _balance_cache["ts"]) < 60:
@@ -190,6 +203,32 @@ def get_balances(address):
     _balance_cache["ts"] = time.time()
     return result
 
+def get_aave_data(address):
+    if _aave_cache["data"] is not None and (time.time() - _aave_cache["ts"]) < 60:
+        return _aave_cache["data"]
+    result = {
+        "enabled": AAVE_ENABLED,
+        "aweth_balance": 0.0,
+        "eth_reserve": AAVE_ETH_RESERVE,
+        "min_deposit": AAVE_MIN_DEPOSIT,
+        "error": None,
+    }
+    if AAVE_ENABLED and address and address != "Unknown":
+        try:
+            rpc_url = os.getenv("RPC_URL") or RPC_URLS.get(NETWORK_ID, RPC_URLS["base-mainnet"])
+            w3 = Web3(Web3.HTTPProvider(rpc_url))
+            contract = w3.eth.contract(
+                address=Web3.to_checksum_address(AAVE_AWETH_ADDRESS), abi=ERC20_ABI
+            )
+            raw = contract.functions.balanceOf(Web3.to_checksum_address(address)).call()
+            result["aweth_balance"] = float(raw) / 1e18
+        except Exception as e:
+            result["error"] = str(e)
+    _aave_cache["data"] = result
+    _aave_cache["ts"] = time.time()
+    return result
+
+
 def parse_logs():
     import re
     lines = []
@@ -197,7 +236,7 @@ def parse_logs():
         with open(LOG_FILE, 'r') as f:
             lines = f.readlines()
 
-    recent_logs = [l.strip() for l in lines[-50:]]
+    recent_logs = [l.strip() for l in lines[-200:]]
     recent_logs.reverse()
 
     # Collect latest Z-score, z_points, and coint_p per pair from log (scan newest-first)
@@ -325,11 +364,20 @@ async def index(request: Request):
         }]
 
     perf = get_performance_metrics()
-    if perf["open_position"] and btc_p > 0 and eth_p > 0:
-        current_ratio = btc_p / eth_p
-        entry_ratio = perf["open_position"]["entry_ratio"]
-        if entry_ratio > 0:
+    if perf["open_position"] and eth_p > 0:
+        pos = perf["open_position"]
+        pair_name = pos.get("pair", "BTC/ETH")
+        if pair_name == "cbETH/ETH" and cbeth_p > 0:
+            current_ratio = cbeth_p / eth_p
+        elif btc_p > 0:
+            current_ratio = btc_p / eth_p
+        else:
+            current_ratio = 0
+        entry_ratio = pos["entry_ratio"]
+        if entry_ratio > 0 and current_ratio > 0:
             perf["unrealized_pnl"] = (current_ratio - entry_ratio) / entry_ratio * 100
+
+    aave = get_aave_data(address)
 
     return templates.TemplateResponse("index.html", {
         "request":          request,
@@ -346,6 +394,7 @@ async def index(request: Request):
         "logs":             logs,
         "dry_run":          DRY_RUN,
         "perf":             perf,
+        "aave":             aave,
     })
 
 @app.get("/api/z-history")
@@ -401,6 +450,13 @@ async def z_history(pair: str = "BTC/ETH"):
 async def trades_api():
     trades = load_jsonl(TRADES_FILE)
     return JSONResponse(list(reversed(trades[-30:])))
+
+
+@app.get("/api/aave")
+async def aave_api():
+    address = get_wallet_address()
+    _aave_cache["data"] = None  # force refresh
+    return JSONResponse(get_aave_data(address))
 
 
 if __name__ == "__main__":

@@ -16,6 +16,7 @@
             --muted:   #6a8cae;
             --accent:  #34d399;
             --danger:  #fb7185;
+            --warn:    #fbbf24;
             --glass-bg:     rgba(255,255,255,0.038);
             --glass-border: rgba(255,255,255,0.09);
             --glass-shine:  rgba(255,255,255,0.055);
@@ -23,7 +24,6 @@
 
         *, *::before, *::after { box-sizing: border-box; }
 
-        /* ── Base ────────────────────────────────────── */
         body {
             font-family: 'Outfit', sans-serif;
             background-color: var(--bg);
@@ -50,7 +50,7 @@
             align-items: center;
             flex-wrap: wrap;
             gap: 10px;
-            margin-bottom: 28px;
+            margin-bottom: 20px;
             padding-bottom: 20px;
             border-bottom: 1px solid rgba(255,255,255,0.06);
         }
@@ -90,7 +90,7 @@
 
         .status-badge.dry {
             background: rgba(250, 204, 21, 0.10);
-            color: #fbbf24;
+            color: var(--warn);
             border: 1px solid rgba(250, 204, 21, 0.25);
         }
 
@@ -98,6 +98,60 @@
             0%, 100% { box-shadow: 0 0 6px rgba(52, 211, 153, 0.18); }
             50%       { box-shadow: 0 0 18px rgba(52, 211, 153, 0.38); }
         }
+
+        /* ── Tab nav ─────────────────────────────────── */
+        .tab-nav {
+            display: flex;
+            gap: 4px;
+            margin-bottom: 20px;
+            background: rgba(255,255,255,0.025);
+            border: 1px solid var(--glass-border);
+            border-radius: 12px;
+            padding: 4px;
+        }
+
+        .tab-btn {
+            flex: 1;
+            font-family: 'Outfit', sans-serif;
+            font-size: 0.8rem;
+            font-weight: 600;
+            letter-spacing: 0.04em;
+            padding: 8px 18px;
+            border-radius: 9px;
+            border: 1px solid transparent;
+            background: transparent;
+            color: var(--muted);
+            cursor: pointer;
+            transition: all 0.18s ease;
+            white-space: nowrap;
+        }
+
+        .tab-btn:hover:not(.active) {
+            color: var(--text);
+            background: rgba(255,255,255,0.04);
+        }
+
+        .tab-btn.active {
+            background: rgba(79,156,249,0.13);
+            border-color: rgba(79,156,249,0.28);
+            color: var(--primary);
+        }
+
+        .tab-btn.active[data-tab="aave"] {
+            background: rgba(52,211,153,0.10);
+            border-color: rgba(52,211,153,0.28);
+            color: var(--accent);
+        }
+
+        .tab-btn.active[data-tab="log"] {
+            background: rgba(251,191,36,0.08);
+            border-color: rgba(251,191,36,0.22);
+            color: var(--warn);
+        }
+
+        /* ── Tab panels ──────────────────────────────── */
+        .tab-panel { display: none; }
+        .tab-panel.active { display: block; }
 
         /* ── Glass card ──────────────────────────────── */
         .card {
@@ -129,7 +183,6 @@
             margin-bottom: 16px;
         }
 
-        /* At tablet+ use the explicit column count set via --grid-cols inline style */
         @media (min-width: 640px) {
             .grid { grid-template-columns: var(--grid-cols, repeat(3, 1fr)); }
         }
@@ -173,11 +226,9 @@
         .negative { color: var(--danger); }
         .neutral  { color: var(--muted); }
 
-        .mono {
-            font-family: 'JetBrains Mono', monospace;
-        }
+        .mono { font-family: 'JetBrains Mono', monospace; }
 
-        /* ── Explanation / status card ───────────────── */
+        /* ── Explanation card ────────────────────────── */
         .explanation-card {
             background: rgba(79, 156, 249, 0.07);
             border-color: rgba(79, 156, 249, 0.2);
@@ -188,9 +239,7 @@
         }
 
         .explanation-card:hover { transform: none; }
-
         .explanation-card .label { color: rgba(167, 200, 255, 0.75); }
-
         .explanation-card p {
             margin: 10px 0 0;
             line-height: 1.6;
@@ -198,7 +247,6 @@
             color: #c8deff;
         }
 
-        /* ── Wallet divider ──────────────────────────── */
         .wallet-divider {
             border: none;
             border-top: 1px solid rgba(255,255,255,0.06);
@@ -223,7 +271,148 @@
         .z-fill-neutral { background: linear-gradient(90deg, #3b6fd4, #4f9cf9); box-shadow: 0 0 8px rgba(79,156,249,0.5); }
         .z-fill-signal  { background: linear-gradient(90deg, #f59e0b, #fb7185); box-shadow: 0 0 10px rgba(251,113,133,0.5); }
 
-        /* ── Log container ───────────────────────────── */
+        /* ── Details button ──────────────────────────── */
+        .details-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            margin-top: 14px;
+            font-size: 0.72rem;
+            font-family: 'Outfit', sans-serif;
+            font-weight: 600;
+            letter-spacing: 0.04em;
+            color: var(--primary);
+            background: rgba(79,156,249,0.08);
+            border: 1px solid rgba(79,156,249,0.22);
+            border-radius: 8px;
+            padding: 5px 12px;
+            cursor: pointer;
+            transition: background 0.18s, border-color 0.18s, box-shadow 0.18s;
+        }
+
+        .details-btn:hover {
+            background: rgba(79,156,249,0.16);
+            border-color: rgba(79,156,249,0.4);
+            box-shadow: 0 0 12px rgba(79,156,249,0.15);
+        }
+
+        /* ── Aave tab specific ───────────────────────── */
+        .aave-card {
+            border-color: rgba(52,211,153,0.15);
+            box-shadow:
+                0 4px 28px rgba(16, 185, 129, 0.08),
+                inset 0 1px 0 rgba(52,211,153,0.06);
+        }
+
+        .aave-card:hover {
+            border-color: rgba(52,211,153,0.28);
+        }
+
+        .aave-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-size: 0.72rem;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            margin-bottom: 12px;
+        }
+
+        .aave-badge.on {
+            background: rgba(52,211,153,0.10);
+            color: var(--accent);
+            border: 1px solid rgba(52,211,153,0.28);
+            animation: badge-pulse 2.4s ease-in-out infinite;
+        }
+
+        .aave-badge.off {
+            background: rgba(106,140,174,0.10);
+            color: var(--muted);
+            border: 1px solid rgba(106,140,174,0.22);
+        }
+
+        .aave-log-entry {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            padding: 5px 0;
+            border-bottom: 1px solid rgba(52,211,153,0.06);
+            color: rgba(52,211,153,0.8);
+            line-height: 1.5;
+        }
+
+        .aave-log-entry:last-child { border: none; }
+
+        .aave-log-scroll {
+            max-height: 220px;
+            overflow-y: auto;
+            scrollbar-width: thin;
+            scrollbar-color: rgba(52,211,153,0.2) transparent;
+        }
+
+        /* ── Log tab specific ────────────────────────── */
+        .log-toolbar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            align-items: center;
+            margin-bottom: 14px;
+        }
+
+        .log-filter-btns { display: flex; gap: 4px; flex-wrap: wrap; }
+
+        .log-filter-btn {
+            font-size: 0.68rem;
+            font-weight: 700;
+            letter-spacing: 0.07em;
+            padding: 4px 10px;
+            border-radius: 6px;
+            border: 1px solid rgba(255,255,255,0.08);
+            background: rgba(255,255,255,0.03);
+            color: var(--muted);
+            cursor: pointer;
+            transition: all 0.15s;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .log-filter-btn:hover { background: rgba(255,255,255,0.07); color: var(--text); }
+        .log-filter-btn.active-all    { background: rgba(255,255,255,0.09); border-color: rgba(255,255,255,0.18); color: var(--text); }
+        .log-filter-btn.active-info   { background: rgba(79,156,249,0.12); border-color: rgba(79,156,249,0.3); color: var(--primary); }
+        .log-filter-btn.active-warn   { background: rgba(251,191,36,0.10); border-color: rgba(251,191,36,0.28); color: var(--warn); }
+        .log-filter-btn.active-error  { background: rgba(251,113,133,0.10); border-color: rgba(251,113,133,0.28); color: var(--danger); }
+        .log-filter-btn.active-signal { background: rgba(52,211,153,0.10); border-color: rgba(52,211,153,0.28); color: var(--accent); }
+        .log-filter-btn.active-aave   { background: rgba(52,211,153,0.08); border-color: rgba(52,211,153,0.2); color: var(--accent); }
+
+        .log-search {
+            flex: 1;
+            min-width: 160px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            background: rgba(255,255,255,0.04);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 8px;
+            color: var(--text);
+            padding: 5px 12px;
+            outline: none;
+            transition: border-color 0.18s, box-shadow 0.18s;
+        }
+
+        .log-search::placeholder { color: var(--muted); }
+
+        .log-search:focus {
+            border-color: rgba(79,156,249,0.35);
+            box-shadow: 0 0 0 3px rgba(79,156,249,0.08);
+        }
+
+        .log-count {
+            font-size: 0.68rem;
+            color: var(--muted);
+            font-family: 'JetBrains Mono', monospace;
+            white-space: nowrap;
+        }
+
         .log-container {
             background: rgba(5,12,26,0.55);
             backdrop-filter: blur(16px);
@@ -231,7 +420,7 @@
             border: 1px solid var(--glass-border);
             border-radius: 18px;
             padding: 22px;
-            max-height: 480px;
+            max-height: 600px;
             overflow-y: auto;
             box-shadow: inset 0 2px 12px rgba(0,0,0,0.25);
             scrollbar-width: thin;
@@ -250,17 +439,19 @@
         .log-entry:last-child { border: none; }
         .log-entry.signal { color: var(--accent); font-weight: 600; }
         .log-entry.error  { color: var(--danger); }
+        .log-entry.warn   { color: var(--warn); }
+        .log-entry.aave   { color: rgba(52,211,153,0.75); }
+        .log-entry.hidden { display: none; }
 
-        /* ── Refresh hint ────────────────────────────── */
-        .refresh-hint {
+        .log-empty {
             text-align: center;
-            color: rgba(106, 140, 174, 0.5);
-            font-size: 0.7rem;
-            margin-top: 24px;
-            letter-spacing: 0.05em;
+            color: var(--muted);
+            font-size: 0.8rem;
+            padding: 32px 0;
+            display: none;
         }
 
-        /* ── Pair tabs (modal chart) ─────────────────── */
+        /* ── Pair tabs (modal) ───────────────────────── */
         .pair-tabs { display: flex; gap: 6px; flex-wrap: wrap; }
 
         .pair-tab {
@@ -287,31 +478,6 @@
             background: rgba(79,156,249,0.12);
             border-color: rgba(79,156,249,0.3);
             color: var(--text);
-        }
-
-        /* ── Details button ──────────────────────────── */
-        .details-btn {
-            display: inline-flex;
-            align-items: center;
-            gap: 5px;
-            margin-top: 14px;
-            font-size: 0.72rem;
-            font-family: 'Outfit', sans-serif;
-            font-weight: 600;
-            letter-spacing: 0.04em;
-            color: var(--primary);
-            background: rgba(79,156,249,0.08);
-            border: 1px solid rgba(79,156,249,0.22);
-            border-radius: 8px;
-            padding: 5px 12px;
-            cursor: pointer;
-            transition: background 0.18s, border-color 0.18s, box-shadow 0.18s;
-        }
-
-        .details-btn:hover {
-            background: rgba(79,156,249,0.16);
-            border-color: rgba(79,156,249,0.4);
-            box-shadow: 0 0 12px rgba(79,156,249,0.15);
         }
 
         /* ── Modal ───────────────────────────────────── */
@@ -427,8 +593,6 @@
             box-shadow: inset 0 2px 10px rgba(0,0,0,0.2);
         }
 
-        #zScoreChart { display: block; }
-
         #chart-no-data {
             text-align: center;
             color: var(--muted);
@@ -481,20 +645,19 @@
             font-family: 'JetBrains Mono', monospace;
         }
 
-        .badge-buy  {
-            background: rgba(52, 211, 153, 0.12);
-            color: var(--accent);
-            border: 1px solid rgba(52,211,153,0.25);
-        }
-
-        .badge-sell {
-            background: rgba(251, 113, 133, 0.12);
-            color: var(--danger);
-            border: 1px solid rgba(251,113,133,0.25);
-        }
+        .badge-buy  { background: rgba(52,211,153,0.12); color: var(--accent); border: 1px solid rgba(52,211,153,0.25); }
+        .badge-sell { background: rgba(251,113,133,0.12); color: var(--danger); border: 1px solid rgba(251,113,133,0.25); }
 
         .num-green { color: var(--accent); }
         .num-red   { color: var(--danger); }
+
+        .refresh-hint {
+            text-align: center;
+            color: rgba(106, 140, 174, 0.5);
+            font-size: 0.7rem;
+            margin-top: 24px;
+            letter-spacing: 0.05em;
+        }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
     <script>setTimeout(() => location.reload(), 30000);</script>
@@ -512,160 +675,334 @@
             </div>
         </header>
 
-        <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap:16px; margin-bottom:16px;">
-            {% for pair in pairs %}
-            <div class="card explanation-card">
-                <div class="label">{{ pair.name }} · Status</div>
-                <p>{{ pair.explanation }}</p>
-            </div>
-            {% endfor %}
-        </div>
+        <!-- ── Tab navigation ─────────────────────────── -->
+        <nav class="tab-nav">
+            <button class="tab-btn active" data-tab="overview">Overview</button>
+            <button class="tab-btn" data-tab="aave">Aave Yield</button>
+            <button class="tab-btn" data-tab="log">Log</button>
+        </nav>
 
-        <!-- Row 1: Wallet · Prices · Open Position — always 3 equal cols -->
-        <div class="grid" style="--grid-cols: repeat(3, 1fr);">
+        <!-- ══════════════════════════════════════════════ -->
+        <!-- TAB: OVERVIEW                                  -->
+        <!-- ══════════════════════════════════════════════ -->
+        <div id="tab-overview" class="tab-panel active">
 
-            <!-- Wallet -->
-            <div class="card">
-                <div class="label">Wallet Balance</div>
-                <div class="value mono" style="font-size:1.6rem; color:var(--text);">
-                    ${{ "{:,.2f}".format(balance * eth_price + cbbtc_balance * btc_price + cbeth_balance * cbeth_price) }}
-                    <span class="unit" style="font-size:0.8rem;">total</span>
+            <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap:16px; margin-bottom:16px;">
+                {% for pair in pairs %}
+                <div class="card explanation-card">
+                    <div class="label">{{ pair.name }} · Status</div>
+                    <p>{{ pair.explanation }}</p>
                 </div>
-                <hr class="wallet-divider">
-                <div class="value mono" style="font-size:0.92rem;">
-                    {{ "%.6f"|format(balance) }} <span class="unit">ETH</span>
-                    <span class="unit" style="font-size:0.72rem;">&nbsp;${{ "{:,.2f}".format(balance * eth_price) }}</span>
-                </div>
-                <div class="value mono" style="margin-top:5px; font-size:0.92rem;">
-                    {{ "%.8f"|format(cbbtc_balance) }} <span class="unit">cbBTC</span>
-                    <span class="unit" style="font-size:0.72rem;">&nbsp;${{ "{:,.2f}".format(cbbtc_balance * btc_price) }}</span>
-                </div>
-                <div class="value mono" style="margin-top:5px; font-size:0.92rem;">
-                    {{ "%.8f"|format(cbeth_balance) }} <span class="unit">cbETH</span>
-                    <span class="unit" style="font-size:0.72rem;">&nbsp;${{ "{:,.2f}".format(cbeth_balance * cbeth_price) }}</span>
-                </div>
-                <div class="label" style="margin-top:12px; font-size:0.65rem; word-break:break-all; letter-spacing:0.03em;">
-                    {{ address }}
-                </div>
+                {% endfor %}
             </div>
 
-            <!-- Prices -->
-            <div class="card">
-                <div class="label">BTC / USD</div>
-                <div class="value mono" style="font-size:1.35rem;">${{ "{:,.2f}".format(btc_price) }}</div>
-                <div class="label" style="margin-top:14px;">ETH / USD</div>
-                <div class="value mono" style="font-size:1.35rem;">${{ "{:,.2f}".format(eth_price) }}</div>
-                {% if cbeth_price > 0 %}
-                <div class="label" style="margin-top:14px;">cbETH / USD</div>
-                <div class="value mono" style="font-size:1.35rem;">${{ "{:,.2f}".format(cbeth_price) }}</div>
-                {% endif %}
+            <!-- Row 1: Wallet · Prices · Open Position -->
+            <div class="grid" style="--grid-cols: repeat(3, 1fr);">
+
+                <div class="card">
+                    <div class="label">Wallet Balance</div>
+                    <div class="value mono" style="font-size:1.6rem; color:var(--text);">
+                        ${{ "{:,.2f}".format(balance * eth_price + cbbtc_balance * btc_price + cbeth_balance * cbeth_price) }}
+                        <span class="unit" style="font-size:0.8rem;">total</span>
+                    </div>
+                    <hr class="wallet-divider">
+                    <div class="value mono" style="font-size:0.92rem;">
+                        {{ "%.6f"|format(balance) }} <span class="unit">ETH</span>
+                        <span class="unit" style="font-size:0.72rem;">&nbsp;${{ "{:,.2f}".format(balance * eth_price) }}</span>
+                    </div>
+                    <div class="value mono" style="margin-top:5px; font-size:0.92rem;">
+                        {{ "%.8f"|format(cbbtc_balance) }} <span class="unit">cbBTC</span>
+                        <span class="unit" style="font-size:0.72rem;">&nbsp;${{ "{:,.2f}".format(cbbtc_balance * btc_price) }}</span>
+                    </div>
+                    <div class="value mono" style="margin-top:5px; font-size:0.92rem;">
+                        {{ "%.8f"|format(cbeth_balance) }} <span class="unit">cbETH</span>
+                        <span class="unit" style="font-size:0.72rem;">&nbsp;${{ "{:,.2f}".format(cbeth_balance * cbeth_price) }}</span>
+                    </div>
+                    {% if aave.enabled and aave.aweth_balance > 0 %}
+                    <div class="value mono" style="margin-top:5px; font-size:0.92rem; color:var(--accent);">
+                        {{ "%.6f"|format(aave.aweth_balance) }} <span class="unit" style="color:var(--accent); opacity:0.7;">aWETH</span>
+                        <span class="unit" style="font-size:0.72rem; color:var(--accent); opacity:0.7;">&nbsp;${{ "{:,.2f}".format(aave.aweth_balance * eth_price) }}</span>
+                    </div>
+                    {% endif %}
+                    <div class="label" style="margin-top:12px; font-size:0.65rem; word-break:break-all; letter-spacing:0.03em;">
+                        {{ address }}
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="label">BTC / USD</div>
+                    <div class="value mono" style="font-size:1.35rem;">${{ "{:,.2f}".format(btc_price) }}</div>
+                    <div class="label" style="margin-top:14px;">ETH / USD</div>
+                    <div class="value mono" style="font-size:1.35rem;">${{ "{:,.2f}".format(eth_price) }}</div>
+                    {% if cbeth_price > 0 %}
+                    <div class="label" style="margin-top:14px;">cbETH / USD</div>
+                    <div class="value mono" style="font-size:1.35rem;">${{ "{:,.2f}".format(cbeth_price) }}</div>
+                    {% endif %}
+                </div>
+
+                <div class="card">
+                    <div class="label">Open Position</div>
+                    {% if perf.open_position %}
+                    <div class="label" style="margin-bottom:4px;">{{ perf.open_position.pair }}</div>
+                    <div class="big-stat mono" style="font-size:1.1rem;">
+                        BUY @ {{ "%.4f"|format(perf.open_position.entry_ratio) }}
+                    </div>
+                    {% if perf.unrealized_pnl is not none %}
+                    <div style="margin-top:7px; font-weight:700; font-size:1rem;"
+                         class="{{ 'positive' if perf.unrealized_pnl >= 0 else 'negative' }}">
+                        {{ "%+.3f"|format(perf.unrealized_pnl) }}% unrealized
+                    </div>
+                    {% endif %}
+                    <div class="sub-label">entry {{ perf.open_position.base_symbol }} ${{ "{:,.2f}".format(perf.open_position.entry_base_price) }}</div>
+                    {% else %}
+                    <div class="big-stat neutral" style="font-size:1.1rem;">Flat</div>
+                    <div class="sub-label">no open position</div>
+                    {% endif %}
+                </div>
+
             </div>
 
-            <!-- Open Position -->
-            <div class="card">
-                <div class="label">Open Position</div>
-                {% if perf.open_position %}
-                <div class="big-stat mono" style="font-size:1.1rem;">
-                    BUY @ {{ "%.3f"|format(perf.open_position.entry_ratio) }}
+            <!-- Row 2: Z-Score cards -->
+            <div class="grid" style="--grid-cols: repeat({{ pairs|length }}, 1fr);">
+                {% for pair in pairs %}
+                <div class="card">
+                    <div class="label">{{ pair.name }} · Z-Score <span style="font-weight:400;">({{ pair.z_score_points }} pts)</span></div>
+                    <div class="value mono" style="font-size:1.7rem; color:{{ pair.z_score_color }};">
+                        {{ "%+.4f"|format(pair.z_score) }}
+                    </div>
+                    <div class="z-score-meter">
+                        <div class="z-score-fill {{ 'z-fill-signal' if (pair.z_score > z_threshold or pair.z_score < -z_threshold) else 'z-fill-neutral' }}"
+                             style="width:{{ pair.z_score_pct }}%;"></div>
+                    </div>
+                    <div class="label" style="font-size:0.65rem;">Target ±{{ z_threshold }}</div>
+                    {% if pair.coint_p is not none %}
+                    <div style="margin-top:10px; display:flex; align-items:center; gap:8px;">
+                        <span class="label" style="margin:0; font-size:0.65rem;">Coint p-value</span>
+                        <span class="mono" style="font-size:0.82rem; font-weight:600;
+                            color:{{ 'var(--accent)' if pair.coint_p < coint_p_threshold else 'var(--danger)' }};">
+                            {{ "%.4f"|format(pair.coint_p) }}
+                        </span>
+                        <span style="font-size:0.65rem; color:{{ 'var(--accent)' if pair.coint_p < coint_p_threshold else 'var(--danger)' }};">
+                            {{ "✓ valid" if pair.coint_p < coint_p_threshold else "✗ blocked" }}
+                        </span>
+                    </div>
+                    {% endif %}
+                    <button class="details-btn" onclick="openModal('{{ pair.name }}')">View Z-History &amp; Trades ↗</button>
                 </div>
-                {% if perf.unrealized_pnl is not none %}
-                <div style="margin-top:7px; font-weight:700; font-size:1rem;"
-                     class="{{ 'positive' if perf.unrealized_pnl >= 0 else 'negative' }}">
-                    {{ "%+.3f"|format(perf.unrealized_pnl) }}% unrealized
+                {% endfor %}
+            </div>
+
+            <!-- Row 3: Performance stats -->
+            {% if perf.has_data %}
+            <div class="grid" style="--grid-cols: repeat(3, 1fr);">
+
+                <div class="card">
+                    <div class="label">Today's Activity</div>
+                    <div class="big-stat">{{ perf.trades_today }}</div>
+                    <div class="sub-label">trades executed</div>
+                    <div style="margin-top:10px; font-size:0.82rem; color:var(--muted);">
+                        {{ perf.ignored_today }} signal{{ 's' if perf.ignored_today != 1 else '' }} ignored
+                    </div>
                 </div>
-                {% endif %}
-                <div class="sub-label">entry BTC ${{ "{:,.0f}".format(perf.open_position.entry_btc_price) }}</div>
+
+                <div class="card">
+                    <div class="label">7-Day Win Rate</div>
+                    {% if perf.win_rate_7d is not none %}
+                    <div class="big-stat {{ 'positive' if perf.win_rate_7d >= 50 else 'negative' }}">
+                        {{ "%.0f"|format(perf.win_rate_7d) }}%
+                    </div>
+                    <div class="sub-label">{{ perf.completed_pairs_7d }} round trip{{ 's' if perf.completed_pairs_7d != 1 else '' }}</div>
+                    {% else %}
+                    <div class="big-stat neutral">—</div>
+                    <div class="sub-label">no completed pairs yet</div>
+                    {% endif %}
+                </div>
+
+                <div class="card">
+                    <div class="label">7-Day Portfolio</div>
+                    {% if perf.portfolio_return_7d is not none %}
+                    <div class="big-stat {{ 'positive' if perf.portfolio_return_7d >= 0 else 'negative' }}">
+                        {{ "%+.2f"|format(perf.portfolio_return_7d) }}%
+                    </div>
+                    <div class="sub-label">ETH-equiv return</div>
+                    {% else %}
+                    <div class="big-stat neutral">—</div>
+                    <div class="sub-label">insufficient history</div>
+                    {% endif %}
+                </div>
+
+            </div>
+            {% endif %}
+
+        </div><!-- /tab-overview -->
+
+        <!-- ══════════════════════════════════════════════ -->
+        <!-- TAB: AAVE YIELD                                -->
+        <!-- ══════════════════════════════════════════════ -->
+        <div id="tab-aave" class="tab-panel">
+
+            <!-- Status + balance row -->
+            <div class="grid" style="--grid-cols: repeat(3, 1fr);">
+
+                <div class="card aave-card">
+                    <div class="label">Aave V3 · Base</div>
+                    <div class="aave-badge {{ 'on' if aave.enabled else 'off' }}">
+                        {{ "● Yield Active" if aave.enabled else "○ Disabled" }}
+                    </div>
+                    <div class="sub-label" style="margin-top:4px;">
+                        {% if aave.enabled %}
+                        Idle ETH earns yield while waiting for trade signals.
+                        {% else %}
+                        Set <span class="mono" style="font-size:0.8em;">AAVE_ENABLED=true</span> in .env to activate.
+                        {% endif %}
+                    </div>
+                    {% if aave.error %}
+                    <div style="margin-top:10px; font-size:0.72rem; color:var(--danger); font-family:'JetBrains Mono',monospace;">
+                        Error: {{ aave.error }}
+                    </div>
+                    {% endif %}
+                </div>
+
+                <div class="card aave-card">
+                    <div class="label">aWETH Balance</div>
+                    <div class="value mono" style="font-size:1.6rem; color:var(--accent);">
+                        {{ "%.6f"|format(aave.aweth_balance) }}
+                        <span class="unit" style="color:var(--accent); opacity:0.65;">ETH</span>
+                    </div>
+                    {% if eth_price > 0 %}
+                    <div class="sub-label">${{ "{:,.2f}".format(aave.aweth_balance * eth_price) }} USD equivalent</div>
+                    {% endif %}
+                    <div style="margin-top:12px; font-size:0.72rem; color:var(--muted);">
+                        Interest-bearing WETH deposited in Aave Pool. Accrues yield per block.
+                    </div>
+                </div>
+
+                <div class="card aave-card">
+                    <div class="label">Total ETH Available</div>
+                    {% set total_eth = balance + aave.aweth_balance %}
+                    <div class="value mono" style="font-size:1.6rem;">
+                        {{ "%.6f"|format(total_eth) }}
+                        <span class="unit">ETH</span>
+                    </div>
+                    {% if eth_price > 0 %}
+                    <div class="sub-label">${{ "{:,.2f}".format(total_eth * eth_price) }} USD equivalent</div>
+                    {% endif %}
+                    <hr class="wallet-divider">
+                    <div style="font-size:0.78rem; color:var(--muted);">
+                        <span class="mono" style="color:var(--text);">{{ "%.6f"|format(balance) }}</span> liquid ETH
+                        + <span class="mono" style="color:var(--accent);">{{ "%.6f"|format(aave.aweth_balance) }}</span> in Aave
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- Settings row -->
+            <div class="grid" style="--grid-cols: repeat(3, 1fr);">
+
+                <div class="card">
+                    <div class="label">Gas Reserve</div>
+                    <div class="value mono" style="font-size:1.4rem;">{{ "%.4f"|format(aave.eth_reserve) }}</div>
+                    <div class="sub-label">ETH kept liquid for gas</div>
+                    <div style="margin-top:10px; font-size:0.72rem; color:var(--muted);">
+                        Set via <span class="mono" style="font-size:0.85em;">AAVE_ETH_RESERVE</span>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="label">Min Deposit</div>
+                    <div class="value mono" style="font-size:1.4rem;">{{ "%.4f"|format(aave.min_deposit) }}</div>
+                    <div class="sub-label">ETH threshold to trigger deposit</div>
+                    <div style="margin-top:10px; font-size:0.72rem; color:var(--muted);">
+                        Set via <span class="mono" style="font-size:0.85em;">AAVE_MIN_DEPOSIT</span>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="label">Aave Dashboard</div>
+                    <div style="margin-top:8px; font-size:0.85rem; color:var(--muted); line-height:1.6;">
+                        View live APY, supply cap, and liquidity utilization for WETH on Base.
+                    </div>
+                    <a href="https://app.aave.com/?marketName=proto_base_v3" target="_blank" rel="noopener"
+                       style="display:inline-flex; align-items:center; gap:5px; margin-top:14px;
+                              font-size:0.72rem; font-weight:600; letter-spacing:0.04em;
+                              color:var(--accent); background:rgba(52,211,153,0.08);
+                              border:1px solid rgba(52,211,153,0.22); border-radius:8px;
+                              padding:5px 12px; text-decoration:none;
+                              transition:background 0.18s, border-color 0.18s;">
+                        View on Aave ↗
+                    </a>
+                </div>
+
+            </div>
+
+            <!-- Recent Aave log activity -->
+            <div class="card" style="border-color:rgba(52,211,153,0.12);">
+                <div class="label" style="margin-bottom:14px;">Recent Aave Activity</div>
+                <div class="aave-log-scroll" id="aave-log-entries">
+                    {% set aave_lines = [] %}
+                    {% for entry in logs %}
+                        {% if '[Aave]' in entry %}
+                            {% set _ = aave_lines.append(entry) %}
+                        {% endif %}
+                    {% endfor %}
+                    {% if aave_lines %}
+                        {% for entry in aave_lines[:20] %}
+                        <div class="aave-log-entry">{{ entry }}</div>
+                        {% endfor %}
+                    {% else %}
+                    <div style="color:var(--muted); font-size:0.8rem; padding:16px 0; text-align:center;">
+                        No Aave activity in recent logs.
+                        {% if not aave.enabled %} Enable Aave yield in .env to see activity here.{% endif %}
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+
+        </div><!-- /tab-aave -->
+
+        <!-- ══════════════════════════════════════════════ -->
+        <!-- TAB: LOG                                       -->
+        <!-- ══════════════════════════════════════════════ -->
+        <div id="tab-log" class="tab-panel">
+
+            <div class="log-toolbar">
+                <div class="log-filter-btns">
+                    <button class="log-filter-btn active-all"    data-filter="all"    onclick="setLogFilter(this,'all')">All</button>
+                    <button class="log-filter-btn"               data-filter="info"   onclick="setLogFilter(this,'info')">Info</button>
+                    <button class="log-filter-btn"               data-filter="warn"   onclick="setLogFilter(this,'warn')">Warning</button>
+                    <button class="log-filter-btn"               data-filter="error"  onclick="setLogFilter(this,'error')">Error</button>
+                    <button class="log-filter-btn"               data-filter="signal" onclick="setLogFilter(this,'signal')">Signal</button>
+                    <button class="log-filter-btn"               data-filter="aave"   onclick="setLogFilter(this,'aave')">Aave</button>
+                </div>
+                <input class="log-search" type="text" id="log-search-input" placeholder="Search logs…" oninput="applyLogFilter()">
+                <span class="log-count" id="log-count"></span>
+            </div>
+
+            <div class="log-container">
+                <div class="log-empty" id="log-empty-msg">No matching log entries.</div>
+                {% for entry in logs %}
+                {% if '[WARNING]' in entry %}
+                    {% set lvl = 'warn' %}
+                {% elif '[ERROR]' in entry or '[CRITICAL]' in entry %}
+                    {% set lvl = 'error' %}
+                {% elif 'SIGNAL' in entry %}
+                    {% set lvl = 'signal' %}
+                {% elif '[Aave]' in entry %}
+                    {% set lvl = 'aave' %}
                 {% else %}
-                <div class="big-stat neutral" style="font-size:1.1rem;">Flat</div>
-                <div class="sub-label">no open position</div>
+                    {% set lvl = 'info' %}
                 {% endif %}
+                <div class="log-entry {{ lvl }}" data-level="{{ lvl }}">{{ entry }}</div>
+                {% endfor %}
             </div>
 
-        </div>
-
-        <!-- Row 2: Z-Score cards — one per pair, always fills full width -->
-        <div class="grid" style="--grid-cols: repeat({{ pairs|length }}, 1fr);">
-            {% for pair in pairs %}
-            <div class="card">
-                <div class="label">{{ pair.name }} · Z-Score <span style="font-weight:400;">({{ pair.z_score_points }} pts)</span></div>
-                <div class="value mono" style="font-size:1.7rem; color:{{ pair.z_score_color }};">
-                    {{ "%+.4f"|format(pair.z_score) }}
-                </div>
-                <div class="z-score-meter">
-                    <div class="z-score-fill {{ 'z-fill-signal' if (pair.z_score > z_threshold or pair.z_score < -z_threshold) else 'z-fill-neutral' }}"
-                         style="width:{{ pair.z_score_pct }}%;"></div>
-                </div>
-                <div class="label" style="font-size:0.65rem;">Target ±{{ z_threshold }}</div>
-                {% if pair.coint_p is not none %}
-                <div style="margin-top:10px; display:flex; align-items:center; gap:8px;">
-                    <span class="label" style="margin:0; font-size:0.65rem;">Coint p-value</span>
-                    <span class="mono" style="font-size:0.82rem; font-weight:600;
-                        color:{{ 'var(--accent)' if pair.coint_p < coint_p_threshold else 'var(--danger)' }};">
-                        {{ "%.4f"|format(pair.coint_p) }}
-                    </span>
-                    <span style="font-size:0.65rem; color:{{ 'var(--accent)' if pair.coint_p < coint_p_threshold else 'var(--danger)' }};">
-                        {{ "✓ valid" if pair.coint_p < coint_p_threshold else "✗ blocked" }}
-                    </span>
-                </div>
-                {% endif %}
-                <button class="details-btn" onclick="openModal('{{ pair.name }}')">View Z-History &amp; Trades ↗</button>
-            </div>
-            {% endfor %}
-        </div>
-
-        <!-- Row 3: Performance stats — always 3 equal cols -->
-        {% if perf.has_data %}
-        <div class="grid" style="--grid-cols: repeat(3, 1fr); margin-bottom:16px;">
-
-            <div class="card">
-                <div class="label">Today's Activity</div>
-                <div class="big-stat">{{ perf.trades_today }}</div>
-                <div class="sub-label">trades executed</div>
-                <div style="margin-top:10px; font-size:0.82rem; color:var(--muted);">
-                    {{ perf.ignored_today }} signal{{ 's' if perf.ignored_today != 1 else '' }} ignored
-                </div>
-            </div>
-
-            <div class="card">
-                <div class="label">7-Day Win Rate</div>
-                {% if perf.win_rate_7d is not none %}
-                <div class="big-stat {{ 'positive' if perf.win_rate_7d >= 50 else 'negative' }}">
-                    {{ "%.0f"|format(perf.win_rate_7d) }}%
-                </div>
-                <div class="sub-label">{{ perf.completed_pairs_7d }} round trip{{ 's' if perf.completed_pairs_7d != 1 else '' }}</div>
-                {% else %}
-                <div class="big-stat neutral">—</div>
-                <div class="sub-label">no completed pairs yet</div>
-                {% endif %}
-            </div>
-
-            <div class="card">
-                <div class="label">7-Day Portfolio</div>
-                {% if perf.portfolio_return_7d is not none %}
-                <div class="big-stat {{ 'positive' if perf.portfolio_return_7d >= 0 else 'negative' }}">
-                    {{ "%+.2f"|format(perf.portfolio_return_7d) }}%
-                </div>
-                <div class="sub-label">ETH-equiv return</div>
-                {% else %}
-                <div class="big-stat neutral">—</div>
-                <div class="sub-label">insufficient history</div>
-                {% endif %}
-            </div>
-
-        </div>
-        {% endif %}
-
-        <div class="log-container">
-            <div class="label" style="margin-bottom:14px;">Recent Log · Last 50</div>
-            {% for entry in logs %}
-            <div class="log-entry {{ 'signal' if 'SIGNAL' in entry else ('error' if 'ERROR' in entry or 'CRITICAL' in entry else '') }}">{{ entry }}</div>
-            {% endfor %}
-        </div>
+        </div><!-- /tab-log -->
 
         <div class="refresh-hint">Auto-refreshing every 30 s</div>
-    </div>
 
-    <!-- ── Details Modal ──────────────────────────────────────────── -->
+    </div><!-- /container -->
+
+    <!-- ── Details Modal ────────────────────────────── -->
     <div id="details-modal" class="modal-overlay" onclick="closeOnBackdrop(event)">
         <div class="modal-panel">
             <div class="modal-header">
@@ -719,23 +1056,83 @@
         let chart = null;
         let activePair = {{ pairs[0].name | tojson }};
 
+        /* ── Tab switching ─────────────────────────── */
+        const TABS = ['overview', 'aave', 'log'];
+
+        function switchTab(name) {
+            if (!TABS.includes(name)) name = 'overview';
+            document.querySelectorAll('.tab-btn').forEach(b =>
+                b.classList.toggle('active', b.dataset.tab === name));
+            document.querySelectorAll('.tab-panel').forEach(p =>
+                p.classList.toggle('active', p.id === 'tab-' + name));
+            history.replaceState(null, '', '#' + name);
+            if (name === 'log') initLogCount();
+        }
+
+        document.querySelectorAll('.tab-btn').forEach(btn =>
+            btn.addEventListener('click', () => switchTab(btn.dataset.tab)));
+
+        // Restore tab from URL hash on load
+        const hashTab = location.hash.slice(1);
+        if (TABS.includes(hashTab)) switchTab(hashTab);
+
+        /* ── Log filtering ─────────────────────────── */
+        let activeLogFilter = 'all';
+
+        window.setLogFilter = function(btn, filter) {
+            activeLogFilter = filter;
+            document.querySelectorAll('.log-filter-btn').forEach(b => {
+                // Remove all active-* classes
+                b.className = b.className.replace(/\bactive-\S+/g, '').trim();
+            });
+            btn.classList.add('active-' + filter);
+            applyLogFilter();
+        };
+
+        window.applyLogFilter = function() {
+            const searchRaw = document.getElementById('log-search-input').value.toLowerCase();
+            const entries = document.querySelectorAll('.log-entry');
+            let visible = 0;
+
+            entries.forEach(el => {
+                const level = el.dataset.level;
+                const matchFilter = activeLogFilter === 'all' || level === activeLogFilter;
+                const matchSearch = !searchRaw || el.textContent.toLowerCase().includes(searchRaw);
+                const show = matchFilter && matchSearch;
+                el.classList.toggle('hidden', !show);
+                if (show) visible++;
+            });
+
+            const total = entries.length;
+            document.getElementById('log-count').textContent =
+                visible === total ? `${total} entries` : `${visible} / ${total}`;
+            document.getElementById('log-empty-msg').style.display =
+                visible === 0 ? 'block' : 'none';
+        };
+
+        function initLogCount() {
+            applyLogFilter();
+        }
+
+        /* ── Modal ─────────────────────────────────── */
         function openModal(pair) {
             if (pair) activePair = pair;
             document.getElementById('details-modal').classList.add('open');
             document.body.style.overflow = 'hidden';
-            // Sync tab highlight to activePair
-            document.querySelectorAll('.pair-tab').forEach(b => {
-                b.classList.toggle('active', b.dataset.pair === activePair);
-            });
+            document.querySelectorAll('.pair-tab').forEach(b =>
+                b.classList.toggle('active', b.dataset.pair === activePair));
             fetchAll(activePair);
         }
+
         function closeModal() {
             document.getElementById('details-modal').classList.remove('open');
             document.body.style.overflow = '';
         }
+
         function closeOnBackdrop(e) {
             if (e.target === document.getElementById('details-modal')) closeModal();
         }
+
         document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
 
         document.querySelectorAll('.pair-tab').forEach(btn => {
@@ -751,6 +1148,7 @@
         window.closeModal = closeModal;
         window.closeOnBackdrop = closeOnBackdrop;
 
+        /* ── Chart & trades fetch ──────────────────── */
         async function fetchAll(pair) {
             try {
                 const [zh, tr] = await Promise.all([
@@ -772,6 +1170,8 @@
                 noData.style.display = 'block';
                 return;
             }
+            canvas.style.display = 'block';
+            noData.style.display = 'none';
 
             if (chart) { chart.destroy(); chart = null; }
 
@@ -898,7 +1298,6 @@
                 const ratio = t.ratio != null ? Number(t.ratio).toFixed(3) : '—';
                 const amt   = t.trade_amount != null ? Number(t.trade_amount).toFixed(6) : '—';
                 const pair  = t.pair || '—';
-                // Support both old (btc_price/eth_price) and new (base_price/quote_price) field names
                 const baseP  = t.base_price  ?? t.btc_price  ?? null;
                 const quoteP = t.quote_price ?? t.eth_price  ?? null;
                 return `<tr>
@@ -913,6 +1312,7 @@
                 </tr>`;
             }).join('');
         }
+
     })();
     </script>
 </body>

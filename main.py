@@ -43,6 +43,17 @@ RPC_URL = os.getenv("RPC_URL", None)
 SWAP_SLIPPAGE_BPS = int(os.getenv("SWAP_SLIPPAGE_BPS", 200))
 TRADES_FILE = os.getenv("TRADES_FILE", "trades.json")
 DAILY_SUMMARY_FILE = os.getenv("DAILY_SUMMARY_FILE", "daily_summary.json")
+# Trade-size scaling: ramp reaches TRADE_SIZE_MAX_PCT at Z_SCORE_THRESHOLD + TRADE_SCALE_RAMP
+# Default 1.0 → max size reached at Z=3.0 (was Z=4.0 when equal to threshold)
+TRADE_SCALE_RAMP = float(os.getenv("TRADE_SCALE_RAMP", "1.0"))
+
+# Aave V3 yield on idle ETH (Base mainnet only; disabled by default)
+# Verify addresses at https://app.aave.com/
+AAVE_ENABLED = os.getenv("AAVE_ENABLED", "false").lower() == "true"
+AAVE_POOL_ADDRESS  = os.getenv("AAVE_POOL_ADDRESS",  "0xA238Dd80C259a72e81d7e4664a9801593F98d1c5")
+AAVE_AWETH_ADDRESS = os.getenv("AAVE_AWETH_ADDRESS", "0xD4a0e0b9149BCee3C920d2E00b5dE09138fd8bb7")
+AAVE_ETH_RESERVE   = float(os.getenv("AAVE_ETH_RESERVE",  "0.001"))  # ETH kept liquid for gas
+AAVE_MIN_DEPOSIT   = float(os.getenv("AAVE_MIN_DEPOSIT",   "0.005"))  # minimum worth depositing
 
 # Guardrails
 COOLDOWN_PERIOD = timedelta(hours=1)
@@ -50,6 +61,21 @@ MIN_TRADE_ETH = 0.0001
 COINT_MIN_POINTS = int(os.getenv("COINT_MIN_POINTS", 20))
 COINT_P_THRESHOLD = float(os.getenv("COINT_P_THRESHOLD", 0.25))
 ADAPTIVE_THRESHOLD_WINDOW = int(os.getenv("ADAPTIVE_THRESHOLD_WINDOW", 12))
+
+# ABIs
+WETH_ABI = [
+    {"inputs": [],                                                                              "name": "deposit",   "outputs": [],                                   "stateMutability": "payable",    "type": "function"},
+    {"inputs": [{"name": "wad",     "type": "uint256"}],                                        "name": "withdraw",  "outputs": [],                                   "stateMutability": "nonpayable", "type": "function"},
+    {"inputs": [{"name": "owner",   "type": "address"}, {"name": "spender", "type": "address"}],"name": "allowance", "outputs": [{"name": "", "type": "uint256"}],    "stateMutability": "view",       "type": "function"},
+    {"inputs": [{"name": "spender", "type": "address"}, {"name": "amount",  "type": "uint256"}],"name": "approve",   "outputs": [{"name": "", "type": "bool"}],        "stateMutability": "nonpayable", "type": "function"},
+    {"inputs": [{"name": "account", "type": "address"}],                                        "name": "balanceOf", "outputs": [{"name": "", "type": "uint256"}],    "stateMutability": "view",       "type": "function"},
+]
+AAVE_POOL_ABI = [
+    {"inputs": [{"name": "asset", "type": "address"}, {"name": "amount", "type": "uint256"}, {"name": "onBehalfOf", "type": "address"}, {"name": "referralCode", "type": "uint16"}],
+     "name": "supply",   "outputs": [],                                "stateMutability": "nonpayable", "type": "function"},
+    {"inputs": [{"name": "asset", "type": "address"}, {"name": "amount", "type": "uint256"}, {"name": "to",         "type": "address"}],
+     "name": "withdraw", "outputs": [{"name": "", "type": "uint256"}], "stateMutability": "nonpayable", "type": "function"},
+]
 
 # Constants
 NATIVE_ETH = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
@@ -369,7 +395,7 @@ class SentinelAlpha:
 
     def _scaled_trade_pct(self, z_score: float) -> float:
         excess = abs(z_score) - Z_SCORE_THRESHOLD
-        scale = max(0.0, min(1.0, excess / Z_SCORE_THRESHOLD))
+        scale = max(0.0, min(1.0, excess / TRADE_SCALE_RAMP))
         return TRADE_SIZE_PCT + scale * (TRADE_SIZE_MAX_PCT - TRADE_SIZE_PCT)
 
     # ── Permit2 approval ──────────────────────────────────────────────────────
@@ -420,6 +446,141 @@ class SentinelAlpha:
         except Exception as e:
             logger.error(f"Error ensuring Permit2 approval for {token_address}: {e}")
             return False
+
+    # ── Aave V3 yield ─────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _tx_succeeded(receipt) -> bool:
+        status = receipt.get("status", 0) if isinstance(receipt, dict) else getattr(receipt, "status", 0)
+        return status in (1, "success")
+
+    def _get_aave_eth_balance(self) -> float:
+        """Returns ETH currently earning yield in Aave (aWETH balance), or 0 if disabled."""
+        if not AAVE_ENABLED:
+            return 0.0
+        try:
+            w3 = self.wallet_provider._web3
+            wallet = Web3.to_checksum_address(self.wallet_provider.get_address())
+            aweth = w3.eth.contract(
+                address=Web3.to_checksum_address(AAVE_AWETH_ADDRESS),
+                abi=[{"inputs": [{"name": "account", "type": "address"}], "name": "balanceOf",
+                      "outputs": [{"name": "", "type": "uint256"}], "stateMutability": "view", "type": "function"}],
+            )
+            return float(aweth.functions.balanceOf(wallet).call()) / 1e18
+        except Exception as e:
+            logger.error(f"[Aave] Error reading aWETH balance: {e}")
+            return 0.0
+
+    def _aave_supply_eth(self, amount_eth: float) -> bool:
+        """Wrap ETH → WETH, approve Aave Pool if needed, supply. Returns True on success."""
+        if not AAVE_ENABLED or DRY_RUN or amount_eth <= 0:
+            return True
+        try:
+            w3 = self.wallet_provider._web3
+            wallet = Web3.to_checksum_address(self.wallet_provider.get_address())
+            weth_addr = Web3.to_checksum_address(TOKENS[NETWORK_ID]["WETH"])
+            pool_addr = Web3.to_checksum_address(AAVE_POOL_ADDRESS)
+            amount_wei = int(amount_eth * 1e18)
+            weth = w3.eth.contract(address=weth_addr, abi=WETH_ABI)
+
+            # 1. Wrap ETH → WETH
+            tx = self.wallet_provider.send_transaction(
+                {"to": weth_addr, "data": weth.encodeABI(fn_name="deposit", args=[]), "value": amount_wei}
+            )
+            if not self._tx_succeeded(self.wallet_provider.wait_for_transaction_receipt(tx)):
+                logger.error(f"[Aave] ETH wrap failed | tx: {tx}")
+                return False
+
+            # 2. Approve Pool to spend WETH (skip if already sufficient)
+            if weth.functions.allowance(wallet, pool_addr).call() < amount_wei:
+                tx = self.wallet_provider.send_transaction(
+                    {"to": weth_addr, "data": weth.encodeABI(fn_name="approve", args=[pool_addr, 2**256 - 1]), "value": 0}
+                )
+                if not self._tx_succeeded(self.wallet_provider.wait_for_transaction_receipt(tx)):
+                    logger.error(f"[Aave] WETH→Pool approval failed | tx: {tx}")
+                    return False
+
+            # 3. Supply WETH to Pool
+            pool = w3.eth.contract(address=pool_addr, abi=AAVE_POOL_ABI)
+            tx = self.wallet_provider.send_transaction(
+                {"to": pool_addr, "data": pool.encodeABI(fn_name="supply", args=[weth_addr, amount_wei, wallet, 0]), "value": 0}
+            )
+            if not self._tx_succeeded(self.wallet_provider.wait_for_transaction_receipt(tx)):
+                logger.error(f"[Aave] Supply failed | tx: {tx}")
+                return False
+
+            self._balance_cache.pop(NATIVE_ETH, None)
+            logger.info(f"[Aave] Supplied {amount_eth:.6f} ETH. aWETH balance: {self._get_aave_eth_balance():.6f}")
+            return True
+        except Exception as e:
+            logger.error(f"[Aave] Supply error: {e}")
+            return False
+
+    def _aave_withdraw_eth(self, amount_eth: float) -> bool:
+        """Withdraw WETH from Aave Pool, unwrap to native ETH. Returns True on success."""
+        if not AAVE_ENABLED or DRY_RUN or amount_eth <= 0:
+            return True
+        try:
+            w3 = self.wallet_provider._web3
+            wallet = Web3.to_checksum_address(self.wallet_provider.get_address())
+            weth_addr = Web3.to_checksum_address(TOKENS[NETWORK_ID]["WETH"])
+            pool_addr = Web3.to_checksum_address(AAVE_POOL_ADDRESS)
+            amount_wei = int(amount_eth * 1e18)
+
+            # 1. Withdraw WETH from Pool (burns aWETH, sends WETH to wallet)
+            pool = w3.eth.contract(address=pool_addr, abi=AAVE_POOL_ABI)
+            tx = self.wallet_provider.send_transaction(
+                {"to": pool_addr, "data": pool.encodeABI(fn_name="withdraw", args=[weth_addr, amount_wei, wallet]), "value": 0}
+            )
+            if not self._tx_succeeded(self.wallet_provider.wait_for_transaction_receipt(tx)):
+                logger.error(f"[Aave] Withdraw failed | tx: {tx}")
+                return False
+
+            # 2. Unwrap WETH → ETH
+            weth = w3.eth.contract(address=weth_addr, abi=WETH_ABI)
+            tx = self.wallet_provider.send_transaction(
+                {"to": weth_addr, "data": weth.encodeABI(fn_name="withdraw", args=[amount_wei]), "value": 0}
+            )
+            if not self._tx_succeeded(self.wallet_provider.wait_for_transaction_receipt(tx)):
+                logger.error(f"[Aave] WETH unwrap failed | tx: {tx}")
+                return False
+
+            self._balance_cache.pop(NATIVE_ETH, None)
+            logger.info(f"[Aave] Withdrew {amount_eth:.6f} ETH. aWETH balance: {self._get_aave_eth_balance():.6f}")
+            return True
+        except Exception as e:
+            logger.error(f"[Aave] Withdraw error: {e}")
+            return False
+
+    def _deposit_idle_eth(self):
+        """Deposit ETH above reserve into Aave for yield. No-op if disabled or dry run."""
+        if not AAVE_ENABLED or DRY_RUN:
+            return
+        try:
+            eth_balance = self.get_token_balance(NATIVE_ETH, force_refresh=True)
+            idle = eth_balance - AAVE_ETH_RESERVE
+            if idle >= AAVE_MIN_DEPOSIT:
+                logger.info(f"[Aave] Depositing {idle:.6f} idle ETH (keeping {AAVE_ETH_RESERVE} ETH reserve).")
+                self._aave_supply_eth(idle)
+        except Exception as e:
+            logger.error(f"[Aave] Error depositing idle ETH: {e}")
+
+    def _ensure_eth_available(self, amount_needed: float):
+        """Withdraw from Aave if native ETH balance is insufficient for a pending trade."""
+        if not AAVE_ENABLED or DRY_RUN:
+            return
+        try:
+            eth_balance = self.get_token_balance(NATIVE_ETH, force_refresh=True)
+            shortfall = amount_needed - eth_balance
+            if shortfall <= 0:
+                return
+            aave_bal = self._get_aave_eth_balance()
+            withdraw_amount = min(shortfall + AAVE_ETH_RESERVE, aave_bal)
+            if withdraw_amount > 0:
+                logger.info(f"[Aave] Withdrawing {withdraw_amount:.6f} ETH for trade (shortfall={shortfall:.6f}).")
+                self._aave_withdraw_eth(withdraw_amount)
+        except Exception as e:
+            logger.error(f"[Aave] Error ensuring ETH available: {e}")
 
     # ── Portfolio ─────────────────────────────────────────────────────────────
 
@@ -474,10 +635,11 @@ class SentinelAlpha:
                 break
 
         eth_balance = self.get_token_balance(NATIVE_ETH)
+        aave_eth = self._get_aave_eth_balance()
         if eth_price_usd == 0:
-            return eth_balance  # fallback before first price fetch
+            return eth_balance + aave_eth  # fallback before first price fetch
 
-        total = eth_balance
+        total = eth_balance + aave_eth
         seen_tokens: set[str] = set()
         for pair in self.pairs:
             if not pair.is_enabled() or pair.base_token in seen_tokens:
@@ -660,8 +822,12 @@ class SentinelAlpha:
                 # Swap quote (ETH) → base token
                 from_token = pair.quote_token
                 to_token   = pair.base_token
-                balance    = self.get_token_balance(from_token, force_refresh=True)
-                trade_amount = max(balance * scaled_pct * pair.capital_fraction, MIN_TRADE_ETH)
+                native_bal = self.get_token_balance(from_token, force_refresh=True)
+                aave_eth   = self._get_aave_eth_balance()
+                total_eth  = native_bal + aave_eth
+                trade_amount = max(total_eth * scaled_pct * pair.capital_fraction, MIN_TRADE_ETH)
+                self._ensure_eth_available(trade_amount)
+                balance = self.get_token_balance(from_token, force_refresh=True)
                 if balance < trade_amount:
                     logger.warning(f"[{pair.name}] Insufficient quote balance ({balance:.6f}). Skipping.")
                     return
@@ -746,6 +912,8 @@ class SentinelAlpha:
             f"Sentinel-Alpha started. Strategy: Mean Reversion | "
             f"Pairs: {active} | DRY_RUN: {DRY_RUN}"
         )
+        if AAVE_ENABLED:
+            logger.info(f"[Aave] Yield enabled. Current aWETH balance: {self._get_aave_eth_balance():.6f} ETH")
 
         while True:
             try:
@@ -787,6 +955,7 @@ class SentinelAlpha:
                     elif z_score > threshold:
                         self.execute_trade(pair, "SELL", z_score)
 
+                self._deposit_idle_eth()
                 time.sleep(300)
 
             except Exception as e:
