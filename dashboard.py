@@ -45,6 +45,32 @@ ERC20_ABI = [
     {"inputs":[],"name":"decimals","outputs":[{"name":"","type":"uint8"}],"stateMutability":"view","type":"function"}
 ]
 
+WETH_ADDRESS_MAINNET = "0x4200000000000000000000000000000000000006"
+
+AAVE_RESERVE_ABI = [{
+    "inputs": [{"name": "asset", "type": "address"}],
+    "name": "getReserveData",
+    "outputs": [{"components": [
+        {"name": "configuration",             "type": "uint256"},
+        {"name": "liquidityIndex",            "type": "uint128"},
+        {"name": "currentLiquidityRate",      "type": "uint128"},
+        {"name": "variableBorrowIndex",       "type": "uint128"},
+        {"name": "currentVariableBorrowRate", "type": "uint128"},
+        {"name": "currentStableBorrowRate",   "type": "uint128"},
+        {"name": "lastUpdateTimestamp",       "type": "uint40"},
+        {"name": "id",                        "type": "uint16"},
+        {"name": "aTokenAddress",             "type": "address"},
+        {"name": "stableDebtTokenAddress",    "type": "address"},
+        {"name": "variableDebtTokenAddress",  "type": "address"},
+        {"name": "interestRateStrategyAddress","type": "address"},
+        {"name": "accruedToTreasury",         "type": "uint128"},
+        {"name": "unbacked",                  "type": "uint128"},
+        {"name": "isolationModeTotalDebt",    "type": "uint128"},
+    ], "name": "", "type": "tuple"}],
+    "stateMutability": "view",
+    "type": "function",
+}]
+
 def load_jsonl(path):
     records = []
     if not os.path.exists(path):
@@ -58,6 +84,25 @@ def load_jsonl(path):
                 except json.JSONDecodeError:
                     continue
     return records
+
+
+def get_starting_balance():
+    """Return (start_date, start_usd) from the first daily_summary record."""
+    if not os.path.exists(DAILY_SUMMARY_FILE):
+        return None, None
+    try:
+        with open(DAILY_SUMMARY_FILE) as f:
+            first_line = f.readline().strip()
+        if not first_line:
+            return None, None
+        record = json.loads(first_line)
+        eth_val = record.get("portfolio_eth_value_eod", 0)
+        eth_px  = record.get("eth_price_eod", 0)
+        if eth_val > 0 and eth_px > 0:
+            return record.get("date"), eth_val * eth_px
+    except Exception:
+        pass
+    return None, None
 
 
 def get_performance_metrics():
@@ -203,6 +248,20 @@ def get_balances(address):
     _balance_cache["ts"] = time.time()
     return result
 
+def _parse_total_deposited():
+    """Sum all [Aave] Depositing X idle ETH log entries."""
+    import re
+    total = 0.0
+    if not os.path.exists(LOG_FILE):
+        return total
+    with open(LOG_FILE) as f:
+        for line in f:
+            m = re.search(r'\[Aave\] Depositing ([\d.]+) idle ETH', line)
+            if m:
+                total += float(m.group(1))
+    return total
+
+
 def get_aave_data(address):
     if _aave_cache["data"] is not None and (time.time() - _aave_cache["ts"]) < 60:
         return _aave_cache["data"]
@@ -211,17 +270,46 @@ def get_aave_data(address):
         "aweth_balance": 0.0,
         "eth_reserve": AAVE_ETH_RESERVE,
         "min_deposit": AAVE_MIN_DEPOSIT,
+        "total_deposited": 0.0,
+        "yield_earned": 0.0,
+        "apy": None,
+        "daily_earnings_eth": None,
         "error": None,
     }
     if AAVE_ENABLED and address and address != "Unknown":
         try:
             rpc_url = os.getenv("RPC_URL") or RPC_URLS.get(NETWORK_ID, RPC_URLS["base-mainnet"])
             w3 = Web3(Web3.HTTPProvider(rpc_url))
-            contract = w3.eth.contract(
+
+            # aWETH balance
+            aweth = w3.eth.contract(
                 address=Web3.to_checksum_address(AAVE_AWETH_ADDRESS), abi=ERC20_ABI
             )
-            raw = contract.functions.balanceOf(Web3.to_checksum_address(address)).call()
+            raw = aweth.functions.balanceOf(Web3.to_checksum_address(address)).call()
             result["aweth_balance"] = float(raw) / 1e18
+
+            # APY from Aave Pool
+            pool_address = os.getenv("AAVE_POOL_ADDRESS", "0xA238Dd8c259237A5e455dD0D08F0a2e84FB1d0f4")
+            pool = w3.eth.contract(
+                address=Web3.to_checksum_address(pool_address), abi=AAVE_RESERVE_ABI
+            )
+            reserve = pool.functions.getReserveData(
+                Web3.to_checksum_address(WETH_ADDRESS_MAINNET)
+            ).call()
+            RAY = 1e27
+            SECONDS_PER_YEAR = 31_536_000
+            apr = reserve[2] / RAY  # currentLiquidityRate
+            result["apy"] = ((1 + apr / SECONDS_PER_YEAR) ** SECONDS_PER_YEAR - 1) * 100
+
+            # Yield earned
+            total_dep = _parse_total_deposited()
+            result["total_deposited"] = total_dep
+            result["yield_earned"] = max(0.0, result["aweth_balance"] - total_dep)
+
+            # Projected daily earnings based on current balance
+            if result["apy"] is not None and result["aweth_balance"] > 0:
+                result["daily_earnings_eth"] = result["aweth_balance"] * (result["apy"] / 100) / 365
+
         except Exception as e:
             result["error"] = str(e)
     _aave_cache["data"] = result
@@ -379,6 +467,16 @@ async def index(request: Request):
 
     aave = get_aave_data(address)
 
+    start_date, start_usd = get_starting_balance()
+    current_usd = (
+        eth_bal * eth_p
+        + btc_bal * btc_p
+        + cbeth_bal * cbeth_p
+        + (aave["aweth_balance"] * eth_p if aave["enabled"] else 0)
+    )
+    pnl_usd = (current_usd - start_usd) if start_usd else None
+    pnl_pct = (pnl_usd / start_usd * 100) if (start_usd and start_usd > 0) else None
+
     return templates.TemplateResponse("index.html", {
         "request":          request,
         "balance":          eth_bal,
@@ -395,6 +493,11 @@ async def index(request: Request):
         "dry_run":          DRY_RUN,
         "perf":             perf,
         "aave":             aave,
+        "start_date":       start_date,
+        "start_usd":        start_usd,
+        "current_usd":      current_usd,
+        "pnl_usd":          pnl_usd,
+        "pnl_pct":          pnl_pct,
     })
 
 @app.get("/api/z-history")

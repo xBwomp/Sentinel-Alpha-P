@@ -1,110 +1,253 @@
 # Sentinel-Alpha Trading Agent
 
-Sentinel-Alpha is an autonomous Mean Reversion trading agent built for the **Coinbase Base Network** (Base Sepolia Testnet). It utilizes the **Coinbase AgentKit SDK** to monitor BTC/ETH price ratios and execute automated "Shadow Trades" based on statistical deviations.
+An autonomous mean-reversion trading agent running on the **Coinbase Base Network** (mainnet). Trades cbBTC/ETH and cbETH/ETH pairs using Z-score signals, with Aave V3 yield on idle ETH and Telegram notifications.
 
-## Description
+---
 
-The agent implements a quantitative **Mean Reversion strategy** by calculating a rolling **Z-Score** of the BTC/ETH price ratio over a 24-hour window. 
+## Table of Contents
+- [Strategy](#strategy)
+- [Fresh Server Setup](#fresh-server-setup)
+- [Migrating From Another Server](#migrating-from-another-server)
+- [Environment Variables](#environment-variables)
+- [Telegram Notifications Setup](#telegram-notifications-setup)
+- [Aave Yield Setup](#aave-yield-setup)
+- [Daily Operations](#daily-operations)
+- [Architecture](#architecture)
 
-### Core Logic:
-- **Signal Generation**:
-  - **BUY**: Triggered when the Z-Score falls below the threshold (BTC is undervalued relative to ETH).
-  - **SELL**: Triggered when the Z-Score rises above the threshold (BTC is overvalued relative to ETH).
-- **Adaptive Threshold**: The Z-score trigger scales with the current volatility regime — raised during high-volatility periods (noise reduction) and lowered during calm periods (higher sensitivity). Clamped to [0.5×, 2.0×] the base threshold.
-- **Cointegration Gate**: Before executing any trade, the agent verifies the BTC/ETH pair is statistically cointegrated (Engle-Granger p < 0.05) over the rolling window. Trading is paused if the pair fails this check, since mean reversion is only valid on cointegrated pairs.
-- **Real-Time Data**: Fetches live spot prices for BTC/USD and ETH/USD directly from the Coinbase API.
-- **Safety Guardrails**:
-  - **DRY_RUN Mode**: Toggle actual API trading on/off via environment variables.
-  - **Position Sizing**: Trade size scales linearly with Z-score deviation, from a base percentage up to a configurable cap.
-  - **Daily Stop Loss**: Halts the agent if the wallet's total value drops by more than **5%** within a UTC calendar day.
+---
 
-## Technical Stack
-- **Language**: Python 3.11+
-- **Key Libraries**: `coinbase-agentkit`, `pandas`, `statsmodels`, `requests`, `python-dotenv`
-- **Infrastructure**: Docker & Docker Compose (Optimized for Unraid/Server deployment)
+## Strategy
 
-## Installation
+Mean reversion on BTC/ETH and cbETH/ETH price ratios:
+- **BUY** when Z-Score < −threshold (base token undervalued)
+- **SELL** when Z-Score > +threshold (base token overvalued)
+- Trades are gated by an Engle-Granger cointegration check — paused if the pair is not statistically cointegrated
+- Adaptive threshold scales with volatility regime (0.5×–2.0× base)
+- Trade size ramps linearly with Z-score from `TRADE_SIZE_PCT` (at threshold) to `TRADE_SIZE_MAX_PCT` (at threshold + `TRADE_SCALE_RAMP`)
+- Daily stop-loss halts the agent if portfolio drops more than `DAILY_STOP_LOSS_PCT` from the day's starting value
 
-### 1. Clone the Repository
+---
+
+## Fresh Server Setup
+
+### 1. Prerequisites
+```bash
+# Python 3.11+ required
+python3 --version
+
+# Install pip if needed
+sudo apt install python3-pip python3-venv  # Debian/Ubuntu
+```
+
+### 2. Clone and set up virtualenv
 ```bash
 git clone https://github.com/xbwomp/sentinel-alpha-p.git
 cd sentinel-alpha-p
+
+python3.11 -m venv myenv
+source myenv/bin/activate
+pip install -r requirements.txt
 ```
 
-### 2. Configure Environment Variables
-Copy the template and fill in your Coinbase CDP credentials:
+### 3. Configure environment
 ```bash
 cp .env.example .env
+chmod 600 .env   # restrict to owner only
+nano .env        # fill in credentials — see Environment Variables section
 ```
 
-Edit the `.env` file with your specific values:
-- `CDP_API_KEY_ID`: Your full CDP API Key Name (e.g., `organizations/.../apiKeys/...`)
-- `CDP_API_KEY_SECRET`: Your PEM-formatted Private Key.
-- `CDP_WALLET_SECRET`: Your generated Server Wallet Secret.
-- `NETWORK_ID`: Set to `base-sepolia` for testing.
-
-### 3. Docker Deployment
-Build and start the container in detached mode:
+### 4. Create required data files (if not migrating)
 ```bash
-docker-compose up -d --build
+touch trading_log.txt trades.json daily_summary.json
+echo '{}' > wallet_data.json
 ```
 
-## Usage
-
-### Monitoring Logs
-The agent logs all signals, price updates, and trade executions to a local file that persists outside the Docker container.
+### 5. Start the agent and dashboard
 ```bash
+nohup myenv/bin/python3 main.py >> trading_log.txt 2>&1 &
+nohup myenv/bin/python3 dashboard.py >> dashboard_output.log 2>&1 &
+```
+
+Dashboard is available at `http://<server-ip>:8000`
+
+### 6. Set up the watchdog cron
+```bash
+crontab -e
+```
+Add these lines:
+```
+# Watchdog: restart agent if not running
+*/5 * * * * cd /home/<user>/sentinel-alpha-p && pgrep -f 'python3 main.py' > /dev/null || nohup myenv/bin/python3 main.py >> trading_log.txt 2>&1
+
+# Weekly performance report (Monday 9am)
+0 9 * * 1 cd /home/<user>/sentinel-alpha-p && myenv/bin/python3 analyze.py >> analysis_log.txt 2>&1
+
+# Monthly report (1st of month 9am)
+0 9 1 * * cd /home/<user>/sentinel-alpha-p && myenv/bin/python3 analyze.py --monthly >> analysis_log.txt 2>&1
+```
+
+---
+
+## Migrating From Another Server
+
+### Files to copy (critical)
+```bash
+# On the old server — pack up everything needed
+tar czf sentinel-migrate.tar.gz \
+  .env \
+  wallet_data.json \
+  trades.json \
+  daily_summary.json \
+  trading_log.txt \
+  price_history.json
+```
+
+Transfer to new server:
+```bash
+scp sentinel-migrate.tar.gz user@newserver:/home/<user>/sentinel-alpha-p/
+```
+
+On the new server, after completing Fresh Server Setup steps 1–2:
+```bash
+cd sentinel-alpha-p
+tar xzf sentinel-migrate.tar.gz
+chmod 600 .env
+```
+
+Then continue from step 5.
+
+> **wallet_data.json is critical.** It contains the on-chain wallet address. If lost, the agent will create a new wallet and you will lose access to funds in the old wallet. Back this file up separately.
+
+### Checklist
+- [ ] `wallet_data.json` copied and present
+- [ ] `.env` copied and `chmod 600` applied
+- [ ] `trades.json` and `daily_summary.json` copied (trade history)
+- [ ] Virtualenv recreated fresh (`myenv/` — do not copy, reinstall)
+- [ ] Watchdog cron set up with correct username/path
+- [ ] Agent starts and logs show correct wallet address
+- [ ] Telegram notification received on startup
+- [ ] Dashboard accessible on port 8000
+
+---
+
+## Environment Variables
+
+All config lives in `.env`. Keep this file `chmod 600`.
+
+### Required
+| Variable | Purpose |
+|---|---|
+| `CDP_API_KEY_ID` | Coinbase CDP API key name (full path: `organizations/.../apiKeys/...`) |
+| `CDP_API_KEY_SECRET` | PEM private key — use `\n` for newlines in the single-line format |
+| `CDP_WALLET_SECRET` | CDP server wallet secret |
+
+### Network
+| Variable | Default | Purpose |
+|---|---|---|
+| `NETWORK_ID` | `base-sepolia` | `base-mainnet` for live trading |
+| `RPC_URL` | — | Custom RPC endpoint — recommended over public nodes (Alchemy/QuickNode free tier works) |
+| `DRY_RUN` | `true` | Set `false` to enable live on-chain swaps |
+
+### Strategy
+| Variable | Default | Purpose |
+|---|---|---|
+| `Z_SCORE_THRESHOLD` | `2.0` | Base signal sensitivity |
+| `TRADE_SCALE_RAMP` | `1.0` | Z excess to reach max trade size (max at threshold + ramp) |
+| `WINDOW_SIZE_HOURS` | `24` | Rolling window for Z-Score calculation |
+| `TRADE_SIZE_PCT` | `0.10` | Base trade size at the threshold |
+| `TRADE_SIZE_MAX_PCT` | `0.40` | Max trade size at extreme Z-scores |
+| `DAILY_STOP_LOSS_PCT` | `0.05` | Portfolio drawdown that halts the agent |
+| `ADAPTIVE_THRESHOLD_WINDOW` | `12` | Price points (~1hr) for volatility regime detection |
+| `COINT_P_THRESHOLD` | `0.25` | Max cointegration p-value to allow trading |
+
+### Aave Yield
+| Variable | Default | Purpose |
+|---|---|---|
+| `AAVE_ENABLED` | `false` | Enable idle ETH yield via Aave V3 |
+| `AAVE_POOL_ADDRESS` | `0xA238Dd80C259a72e81d7e4664a9801593F98d1c5` | Aave V3 Pool on Base mainnet |
+| `AAVE_AWETH_ADDRESS` | `0xD4a0e0b9149BCee3C920d2E00b5dE09138fd8bb7` | aWETH token (verify on Basescan: should say "Aave Base WETH") |
+| `AAVE_ETH_RESERVE` | `0.001` | ETH kept liquid for gas, not deposited |
+| `AAVE_MIN_DEPOSIT` | `0.005` | Min idle ETH before depositing |
+
+### Notifications
+| Variable | Default | Purpose |
+|---|---|---|
+| `TELEGRAM_BOT_TOKEN` | — | Bot token from @BotFather |
+| `TELEGRAM_CHAT_ID` | — | Your chat ID (see setup below) |
+
+---
+
+## Telegram Notifications Setup
+
+1. Open Telegram, search **@BotFather**, send `/newbot`, follow prompts → receive a bot token
+2. Start a chat with your new bot (search by the name you gave it)
+3. Get your chat ID — visit this URL in a browser after sending any message to your bot:
+   ```
+   https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates
+   ```
+   Find `"chat":{"id":XXXXXXX}` in the response — that number is your chat ID
+4. Add to `.env`:
+   ```
+   TELEGRAM_BOT_TOKEN=<token>
+   TELEGRAM_CHAT_ID=<chat_id>
+   ```
+5. Restart the agent — you'll receive a startup message confirming it works
+
+**Notifications fire on:** agent start, every trade (BUY/SELL), stop-loss trigger, daily summary (midnight), main loop errors.
+
+---
+
+## Aave Yield Setup
+
+Idle ETH earns ~1–3% APY on Aave V3 while waiting for trade signals. No account needed — it uses the same on-chain wallet.
+
+1. Verify the aWETH address is correct: search `0xD4a0e0b9149BCee3C920d2E00b5dE09138fd8bb7` on [Basescan](https://basescan.org) — should show "Aave: aBasWETH Token"
+2. Set `AAVE_ENABLED=true` in `.env`
+3. Restart the agent
+
+The agent will automatically deposit idle ETH (above the reserve) and withdraw before trades. View live APY at [app.aave.com](https://app.aave.com/?marketName=proto_base_v3).
+
+---
+
+## Daily Operations
+
+```bash
+# Check agent is running
+pgrep -a python3
+
+# Watch live logs
 tail -f trading_log.txt
+
+# Check recent errors
+grep -i error trading_log.txt | tail -20
+
+# Manual restart (agent)
+pkill -f "python3 main.py"
+nohup myenv/bin/python3 main.py >> trading_log.txt 2>&1 &
+
+# Manual restart (dashboard)
+pkill -f "dashboard.py"
+nohup myenv/bin/python3 dashboard.py >> dashboard_output.log 2>&1 &
+
+# Run performance report
+myenv/bin/python3 analyze.py
+myenv/bin/python3 analyze.py --monthly
 ```
 
-### Strategy Parameters
-You can fine-tune the agent's behavior by modifying the variables in the `.env` file:
-- `Z_SCORE_THRESHOLD`: Base sensitivity of the mean reversion signals (Default: 2.0). Scaled adaptively at runtime.
-- `WINDOW_SIZE_HOURS`: The lookback period for calculating the rolling mean (Default: 24).
-- `TRADE_SIZE_PCT`: Base trade size as a fraction of balance at the threshold (Default: 0.10).
-- `TRADE_SIZE_MAX_PCT`: Maximum trade size at extreme Z-scores (Default: 0.40).
-- `ADAPTIVE_THRESHOLD_WINDOW`: Number of recent price points used for the vol-regime comparison (Default: 12, ~1 hour).
-- `COINT_MIN_POINTS`: Minimum price points required before the cointegration check is run (Default: 20).
-- `DRY_RUN`: Set to `false` to enable live trading on the Base network.
+---
 
-### Backtesting
-Replay `price_history.json` through the strategy logic offline before going live:
-```bash
-python backtest.py                          # default params
-python backtest.py --window 12 --threshold 1.8
-python backtest.py --adaptive --coint-gate  # enable Tier 3 features
-python backtest.py --help                   # full option list
-```
+## Architecture
 
-### Unraid Deployment
-- Map the project folder to an Unraid share.
-- Use the Docker Compose Manager plugin to launch the service.
-- Ensure the `trading_log.txt` and `wallet_data.json` are mapped as volumes to persist data across container updates.
+| File | Purpose |
+|---|---|
+| `main.py` | Single-class trading agent (`SentinelAlpha`) |
+| `dashboard.py` | FastAPI dashboard on port 8000 |
+| `templates/index.html` | Dashboard Jinja2 template (3 tabs: Overview, Aave, Log) |
+| `analyze.py` | CLI performance reporter |
+| `wallet_data.json` | Persisted on-chain wallet address |
+| `trades.json` | JSONL structured trade log |
+| `daily_summary.json` | JSONL daily snapshots (written at midnight) |
+| `trading_log.txt` | Unstructured append-only log |
+| `price_history.json` | Rolling price window cache |
 
-## Future Enhancements
-
-### Observability / Alerting
-- **Webhook/Telegram alerts** on critical events (stop-loss trigger, trade execution, agent crash) via a `_send_alert()` helper posting to Discord/Slack/Telegram.
-- **Track actual swap output** — parse the AgentKit `swap` result for real received amounts to enable accurate slippage and fee accounting vs. estimated P&L.
-- **Dockerfile health check** — add a `HEALTHCHECK` that confirms `trading_log.txt` was updated within the last N minutes to detect silent agent crashes.
-
-### Portfolio / Risk
-- **Full portfolio stop-loss** — use `_get_portfolio_eth_value()` (ETH + cbBTC converted to ETH) for the daily stop-loss comparison instead of raw ETH balance only.
-- **Hard position limit** — add a max cbBTC cap as a % of total portfolio to prevent over-concentration from multiple consecutive BUY signals.
-- **Dollar-cost-average mode** — split large signals into N smaller trades over M minutes to reduce slippage, controlled by `DCA_SPLITS` and `DCA_INTERVAL_SECONDS` env vars.
-
-### Dashboard / UX
-- ~~**Live Z-score sparkline** — plot the last 24h of Z-scores as a time series using Chart.js (data already available from `trades.json`).~~ ✅
-- ~~**Trade history table** — show last N trades with signal, Z-score, price, amount, and P&L (data already in `trades.json`).~~ ✅
-- **Mobile-friendly layout** — refactor the current 3/4-column grid to collapse gracefully on small screens.
-
-## Contributing
-Contributions are welcome! Please follow these steps:
-1. Fork the Project.
-2. Create your Feature Branch (`git checkout -b feature/AmazingFeature`).
-3. Commit your Changes (`git commit -m 'Add some AmazingFeature'`).
-4. Push to the Branch (`git push origin feature/AmazingFeature`).
-5. Open a Pull Request.
-
-## License
-Distributed under the MIT License. See `LICENSE` for more information.
+**Tech stack:** Python 3.11, coinbase-agentkit, web3.py, pandas, statsmodels, FastAPI, Chart.js

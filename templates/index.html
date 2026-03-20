@@ -700,11 +700,27 @@
             <div class="grid" style="--grid-cols: repeat(3, 1fr);">
 
                 <div class="card">
-                    <div class="label">Wallet Balance</div>
+                    <div class="label">Portfolio Value</div>
                     <div class="value mono" style="font-size:1.6rem; color:var(--text);">
-                        ${{ "{:,.2f}".format(balance * eth_price + cbbtc_balance * btc_price + cbeth_balance * cbeth_price) }}
+                        ${{ "{:,.2f}".format(current_usd) }}
                         <span class="unit" style="font-size:0.8rem;">total</span>
                     </div>
+                    {% if pnl_usd is not none %}
+                    <div style="display:flex; align-items:baseline; gap:10px; margin-top:4px; flex-wrap:wrap;">
+                        <span class="mono {{ 'positive' if pnl_usd >= 0 else 'negative' }}" style="font-size:1.05rem; font-weight:700;">
+                            {{ ("+$" if pnl_usd >= 0 else "-$") }}{{ "{:,.2f}".format(pnl_usd | abs) }}
+                        </span>
+                        <span class="mono {{ 'positive' if pnl_pct >= 0 else 'negative' }}" style="font-size:0.85rem; font-weight:600;">
+                            ({{ "%+.2f"|format(pnl_pct) }}%)
+                        </span>
+                        {% if start_date %}
+                        <span class="unit" style="font-size:0.65rem;">since {{ start_date }}</span>
+                        {% endif %}
+                    </div>
+                    <div class="sub-label" style="font-size:0.68rem; margin-top:2px;">
+                        started at ${{ "{:,.2f}".format(start_usd) }}
+                    </div>
+                    {% endif %}
                     <hr class="wallet-divider">
                     <div class="value mono" style="font-size:0.92rem;">
                         {{ "%.6f"|format(balance) }} <span class="unit">ETH</span>
@@ -872,9 +888,14 @@
                     {% if eth_price > 0 %}
                     <div class="sub-label">${{ "{:,.2f}".format(aave.aweth_balance * eth_price) }} USD equivalent</div>
                     {% endif %}
-                    <div style="margin-top:12px; font-size:0.72rem; color:var(--muted);">
-                        Interest-bearing WETH deposited in Aave Pool. Accrues yield per block.
+                    {% if aave.apy is not none %}
+                    <div style="margin-top:10px; display:flex; align-items:center; gap:8px;">
+                        <span class="label" style="margin:0; font-size:0.65rem;">Current APY</span>
+                        <span class="mono" style="font-size:1.0rem; font-weight:700; color:var(--accent);">
+                            {{ "%.2f"|format(aave.apy) }}%
+                        </span>
                     </div>
+                    {% endif %}
                 </div>
 
                 <div class="card aave-card">
@@ -892,6 +913,64 @@
                         <span class="mono" style="color:var(--text);">{{ "%.6f"|format(balance) }}</span> liquid ETH
                         + <span class="mono" style="color:var(--accent);">{{ "%.6f"|format(aave.aweth_balance) }}</span> in Aave
                     </div>
+                </div>
+
+            </div>
+
+            <!-- Yield metrics row -->
+            <div class="grid" style="--grid-cols: repeat(3, 1fr);">
+
+                <div class="card aave-card">
+                    <div class="label">Total Deposited</div>
+                    <div class="value mono" style="font-size:1.4rem;">
+                        {{ "%.6f"|format(aave.total_deposited) }}
+                        <span class="unit">ETH</span>
+                    </div>
+                    {% if eth_price > 0 %}
+                    <div class="sub-label">${{ "{:,.2f}".format(aave.total_deposited * eth_price) }} USD</div>
+                    {% endif %}
+                    <div style="margin-top:8px; font-size:0.72rem; color:var(--muted);">
+                        Cumulative ETH supplied to Aave
+                    </div>
+                </div>
+
+                <div class="card aave-card">
+                    <div class="label">Yield Earned</div>
+                    <div class="value mono positive" style="font-size:1.4rem;">
+                        +{{ "%.8f"|format(aave.yield_earned) }}
+                        <span class="unit">ETH</span>
+                    </div>
+                    {% if eth_price > 0 %}
+                    <div class="sub-label positive">+${{ "{:,.4f}".format(aave.yield_earned * eth_price) }} USD</div>
+                    {% endif %}
+                    <div style="margin-top:8px; font-size:0.72rem; color:var(--muted);">
+                        aWETH balance − total deposited
+                    </div>
+                </div>
+
+                <div class="card aave-card">
+                    <div class="label">Projected Earnings</div>
+                    {% if aave.daily_earnings_eth is not none %}
+                    <div style="margin-top:4px;">
+                        <div class="sub-label" style="margin-bottom:2px;">Daily</div>
+                        <div class="value mono" style="font-size:1.0rem; color:var(--accent);">
+                            +{{ "%.8f"|format(aave.daily_earnings_eth) }} ETH
+                            {% if eth_price > 0 %}
+                            <span class="unit" style="font-size:0.7rem;">&nbsp;(${{ "{:,.4f}".format(aave.daily_earnings_eth * eth_price) }})</span>
+                            {% endif %}
+                        </div>
+                        <div class="sub-label" style="margin-top:8px; margin-bottom:2px;">Annual</div>
+                        <div class="value mono" style="font-size:1.0rem; color:var(--accent);">
+                            +{{ "%.6f"|format(aave.daily_earnings_eth * 365) }} ETH
+                            {% if eth_price > 0 %}
+                            <span class="unit" style="font-size:0.7rem;">&nbsp;(${{ "{:,.2f}".format(aave.daily_earnings_eth * 365 * eth_price) }})</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% else %}
+                    <div class="big-stat neutral" style="font-size:1rem;">—</div>
+                    <div class="sub-label">No balance in Aave yet</div>
+                    {% endif %}
                 </div>
 
             </div>

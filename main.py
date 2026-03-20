@@ -47,6 +47,10 @@ DAILY_SUMMARY_FILE = os.getenv("DAILY_SUMMARY_FILE", "daily_summary.json")
 # Default 1.0 → max size reached at Z=3.0 (was Z=4.0 when equal to threshold)
 TRADE_SCALE_RAMP = float(os.getenv("TRADE_SCALE_RAMP", "1.0"))
 
+# Telegram notifications (optional — leave blank to disable)
+TELEGRAM_TOKEN   = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+
 # Aave V3 yield on idle ETH (Base mainnet only; disabled by default)
 # Verify addresses at https://app.aave.com/
 AAVE_ENABLED = os.getenv("AAVE_ENABLED", "false").lower() == "true"
@@ -197,6 +201,12 @@ class SentinelAlpha:
         self.last_summary_date = datetime.now().date()
         self._balance_cache: dict = {}  # token_address -> (value, timestamp)
 
+        # ── Network health / stop-loss guards ────────────────────────────────
+        self._consecutive_price_failures: int = 0
+        self._stale_balance_used: bool = False
+        self._aave_balance_cache: Optional[float] = None  # last known good Aave balance
+        self._stop_loss_first_seen: Optional[datetime] = None  # cooldown start
+
         self._load_price_history()
         self._seed_trade_state()
 
@@ -339,9 +349,11 @@ class SentinelAlpha:
                 f"{sym}: ${prices[sym]:,.2f}" for sym in sorted(prices)
             )
             logger.info(f"Price Update — {price_log}")
+            self._consecutive_price_failures = 0
             self._save_price_history()
 
         except Exception as e:
+            self._consecutive_price_failures += 1
             logger.error(f"Error fetching prices: {e}")
 
     # ── Strategy ──────────────────────────────────────────────────────────────
@@ -426,8 +438,7 @@ class SentinelAlpha:
             if allowance > 0:
                 return True
             logger.info(f"Approving {token_address} for Permit2 (allowance=0)...")
-            approve_data = contract.encodeABI(
-                fn_name="approve",
+            approve_data = contract.encode_abi("approve",
                 args=[Web3.to_checksum_address(self.PERMIT2_ADDRESS), 2**256 - 1],
             )
             tx_hash = self.wallet_provider.send_transaction({
@@ -454,6 +465,20 @@ class SentinelAlpha:
         status = receipt.get("status", 0) if isinstance(receipt, dict) else getattr(receipt, "status", 0)
         return status in (1, "success")
 
+    def _notify(self, message: str):
+        """Send a Telegram message. Failures are logged but never affect trading."""
+        if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+            return
+        try:
+            import requests as _req
+            _req.post(
+                f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+                json={"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "HTML"},
+                timeout=5,
+            )
+        except Exception as e:
+            logger.warning(f"Telegram notification failed: {e}")
+
     def _get_aave_eth_balance(self) -> float:
         """Returns ETH currently earning yield in Aave (aWETH balance), or 0 if disabled."""
         if not AAVE_ENABLED:
@@ -466,9 +491,15 @@ class SentinelAlpha:
                 abi=[{"inputs": [{"name": "account", "type": "address"}], "name": "balanceOf",
                       "outputs": [{"name": "", "type": "uint256"}], "stateMutability": "view", "type": "function"}],
             )
-            return float(aweth.functions.balanceOf(wallet).call()) / 1e18
+            value = float(aweth.functions.balanceOf(wallet).call()) / 1e18
+            self._aave_balance_cache = value
+            return value
         except Exception as e:
             logger.error(f"[Aave] Error reading aWETH balance: {e}")
+            if self._aave_balance_cache is not None:
+                logger.warning(f"[Aave] Returning stale cached aWETH balance: {self._aave_balance_cache:.6f}")
+                self._stale_balance_used = True
+                return self._aave_balance_cache
             return 0.0
 
     def _aave_supply_eth(self, amount_eth: float) -> bool:
@@ -485,7 +516,7 @@ class SentinelAlpha:
 
             # 1. Wrap ETH → WETH
             tx = self.wallet_provider.send_transaction(
-                {"to": weth_addr, "data": weth.encodeABI(fn_name="deposit", args=[]), "value": amount_wei}
+                {"to": weth_addr, "data": weth.encode_abi("deposit", args=[]), "value": amount_wei}
             )
             if not self._tx_succeeded(self.wallet_provider.wait_for_transaction_receipt(tx)):
                 logger.error(f"[Aave] ETH wrap failed | tx: {tx}")
@@ -494,7 +525,7 @@ class SentinelAlpha:
             # 2. Approve Pool to spend WETH (skip if already sufficient)
             if weth.functions.allowance(wallet, pool_addr).call() < amount_wei:
                 tx = self.wallet_provider.send_transaction(
-                    {"to": weth_addr, "data": weth.encodeABI(fn_name="approve", args=[pool_addr, 2**256 - 1]), "value": 0}
+                    {"to": weth_addr, "data": weth.encode_abi("approve", args=[pool_addr, 2**256 - 1]), "value": 0}
                 )
                 if not self._tx_succeeded(self.wallet_provider.wait_for_transaction_receipt(tx)):
                     logger.error(f"[Aave] WETH→Pool approval failed | tx: {tx}")
@@ -503,7 +534,7 @@ class SentinelAlpha:
             # 3. Supply WETH to Pool
             pool = w3.eth.contract(address=pool_addr, abi=AAVE_POOL_ABI)
             tx = self.wallet_provider.send_transaction(
-                {"to": pool_addr, "data": pool.encodeABI(fn_name="supply", args=[weth_addr, amount_wei, wallet, 0]), "value": 0}
+                {"to": pool_addr, "data": pool.encode_abi("supply", args=[weth_addr, amount_wei, wallet, 0]), "value": 0}
             )
             if not self._tx_succeeded(self.wallet_provider.wait_for_transaction_receipt(tx)):
                 logger.error(f"[Aave] Supply failed | tx: {tx}")
@@ -530,7 +561,7 @@ class SentinelAlpha:
             # 1. Withdraw WETH from Pool (burns aWETH, sends WETH to wallet)
             pool = w3.eth.contract(address=pool_addr, abi=AAVE_POOL_ABI)
             tx = self.wallet_provider.send_transaction(
-                {"to": pool_addr, "data": pool.encodeABI(fn_name="withdraw", args=[weth_addr, amount_wei, wallet]), "value": 0}
+                {"to": pool_addr, "data": pool.encode_abi("withdraw", args=[weth_addr, amount_wei, wallet]), "value": 0}
             )
             if not self._tx_succeeded(self.wallet_provider.wait_for_transaction_receipt(tx)):
                 logger.error(f"[Aave] Withdraw failed | tx: {tx}")
@@ -539,7 +570,7 @@ class SentinelAlpha:
             # 2. Unwrap WETH → ETH
             weth = w3.eth.contract(address=weth_addr, abi=WETH_ABI)
             tx = self.wallet_provider.send_transaction(
-                {"to": weth_addr, "data": weth.encodeABI(fn_name="withdraw", args=[amount_wei]), "value": 0}
+                {"to": weth_addr, "data": weth.encode_abi("withdraw", args=[amount_wei]), "value": 0}
             )
             if not self._tx_succeeded(self.wallet_provider.wait_for_transaction_receipt(tx)):
                 logger.error(f"[Aave] WETH unwrap failed | tx: {tx}")
@@ -622,6 +653,7 @@ class SentinelAlpha:
             # Return stale cache on error rather than 0.0, if available
             if cached:
                 logger.warning(f"Returning stale cached balance for {token_address}")
+                self._stale_balance_used = True
                 return cached[0]
             return 0.0
 
@@ -654,13 +686,36 @@ class SentinelAlpha:
 
     # ── Risk Controls ─────────────────────────────────────────────────────────
 
+    # How long to wait with a confirmed stop-loss before halting (gives time to
+    # distinguish a real loss from a transient data glitch).
+    STOP_LOSS_CONFIRM_SECS = 1800  # 30 minutes
+
     def check_stop_loss(self) -> bool:
         today_utc = datetime.utcnow().date()
+
+        # Reset the stale-balance flag before each evaluation so it only reflects
+        # calls made during this cycle.
+        self._stale_balance_used = False
+
         portfolio_value = self._get_portfolio_eth_value()
+
+        # ── Network/data quality guard ────────────────────────────────────────
+        # If prices failed to fetch OR any balance fell back to stale cache,
+        # our portfolio value is unreliable.  Skip the stop-loss check entirely
+        # this cycle rather than risk a false halt.
+        if self._consecutive_price_failures > 0 or self._stale_balance_used:
+            logger.warning(
+                f"Stop-loss check skipped — stale data "
+                f"(price_failures={self._consecutive_price_failures}, "
+                f"stale_balance={self._stale_balance_used}). "
+                f"Will re-evaluate once connectivity is restored."
+            )
+            return True
 
         if self.initial_daily_balance is None or self.daily_reset_date != today_utc:
             self.initial_daily_balance = portfolio_value
             self.daily_reset_date = today_utc
+            self._stop_loss_first_seen = None
             logger.info(f"Daily balance reset: {portfolio_value:.6f} ETH-equiv")
             return True
 
@@ -669,8 +724,49 @@ class SentinelAlpha:
 
         drop = (self.initial_daily_balance - portfolio_value) / self.initial_daily_balance
         if drop > DAILY_STOP_LOSS_PCT:
-            logger.critical(f"STOP LOSS TRIGGERED ({drop:.2%}). Halting agent.")
-            return False
+            now = datetime.utcnow()
+            if self._stop_loss_first_seen is None:
+                # First detection — start the confirmation countdown.
+                self._stop_loss_first_seen = now
+                logger.warning(
+                    f"Stop-loss threshold breached ({drop:.2%} drop). "
+                    f"Trading paused. Will confirm and halt in "
+                    f"{self.STOP_LOSS_CONFIRM_SECS // 60} min if loss persists."
+                )
+                self._notify(
+                    f"⚠️ <b>STOP LOSS WARNING</b>\n"
+                    f"Portfolio down {drop:.2%} today (threshold: {DAILY_STOP_LOSS_PCT:.0%}).\n"
+                    f"Trading paused. Agent will halt in "
+                    f"{self.STOP_LOSS_CONFIRM_SECS // 60} min if loss is confirmed."
+                )
+                # Pause trading this cycle but don't halt yet.
+                return False
+
+            elapsed = (now - self._stop_loss_first_seen).total_seconds()
+            if elapsed >= self.STOP_LOSS_CONFIRM_SECS:
+                logger.critical(
+                    f"STOP LOSS CONFIRMED ({drop:.2%} drop sustained for "
+                    f"{elapsed / 60:.0f} min). Halting agent."
+                )
+                self._notify(
+                    f"🚨 <b>STOP LOSS TRIGGERED</b>\n"
+                    f"Portfolio dropped {drop:.2%} today (sustained "
+                    f"{elapsed / 60:.0f} min).\n"
+                    f"Agent has halted. Manual restart required."
+                )
+                return False
+            else:
+                logger.warning(
+                    f"Stop-loss still breached ({drop:.2%}). "
+                    f"Halting in {(self.STOP_LOSS_CONFIRM_SECS - elapsed) / 60:.0f} min "
+                    f"if loss persists."
+                )
+                return False
+
+        # Loss recovered — reset the cooldown timer.
+        if self._stop_loss_first_seen is not None:
+            logger.info("Stop-loss condition cleared — resuming normal trading.")
+            self._stop_loss_first_seen = None
         return True
 
     def _seed_trade_state(self):
@@ -794,6 +890,12 @@ class SentinelAlpha:
                 f"[{pair.name}] Daily summary: {pair.trades_executed_today} trades, "
                 f"portfolio={portfolio_eth_value:.6f} ETH-equiv"
             )
+            self._notify(
+                f"📊 <b>Daily Summary [{pair.name}]</b> — {date_str}\n"
+                f"Trades: {pair.trades_executed_today} | Ignored: {pair.signals_ignored_cooldown_today + pair.signals_ignored_limit_today}\n"
+                f"Z-Score range: {min(pair.z_scores_today):+.2f} → {max(pair.z_scores_today):+.2f}\n"
+                f"Portfolio: {portfolio_eth_value:.6f} ETH-equiv"
+            )
             pair.reset_daily_counters()
 
     # ── Trade Execution ───────────────────────────────────────────────────────
@@ -900,6 +1002,12 @@ class SentinelAlpha:
             pair.trades_in_last_24h.append(now)
             pair.trades_executed_today += 1
             self._log_trade_structured(pair, signal, z_score, trade_amount, actual_from, actual_to)
+            emoji = "🟢" if signal == "BUY" else "🔴"
+            self._notify(
+                f"{emoji} <b>{signal} {pair.base_symbol}</b> [{pair.name}]\n"
+                f"Amount: {trade_amount:.6f} {pair.quote_symbol if signal == 'BUY' else pair.base_symbol}\n"
+                f"Z-Score: {z_score:+.4f} | DRY_RUN: {DRY_RUN}"
+            )
 
         except Exception as e:
             logger.error(f"[{pair.name}] Error in execution: {e}")
@@ -914,6 +1022,12 @@ class SentinelAlpha:
         )
         if AAVE_ENABLED:
             logger.info(f"[Aave] Yield enabled. Current aWETH balance: {self._get_aave_eth_balance():.6f} ETH")
+        self._notify(
+            f"🤖 <b>Sentinel-Alpha started</b>\n"
+            f"Network: {NETWORK_ID} | DRY_RUN: {DRY_RUN}\n"
+            f"Pairs: {', '.join(active)}\n"
+            f"Aave yield: {'enabled' if AAVE_ENABLED else 'disabled'}"
+        )
 
         while True:
             try:
@@ -960,6 +1074,7 @@ class SentinelAlpha:
 
             except Exception as e:
                 logger.error(f"Error in main loop: {e}")
+                self._notify(f"⚠️ <b>Agent error</b>\n{str(e)[:200]}")
                 time.sleep(60)
 
 

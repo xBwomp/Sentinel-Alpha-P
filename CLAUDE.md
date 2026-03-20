@@ -5,50 +5,95 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Running the Agent
 
 ```bash
-# Local (requires Python 3.11+)
-cp .env.example .env   # fill in credentials
-pip install -r requirements.txt
-python main.py
+# Activate virtualenv (always use myenv — Python 3.11)
+source myenv/bin/activate
 
-# Docker (preferred for deployment)
-docker-compose up -d --build
+# Start agent in background
+nohup myenv/bin/python3 main.py >> trading_log.txt 2>&1 &
+
+# Start dashboard in background
+nohup myenv/bin/python3 dashboard.py >> dashboard_output.log 2>&1 &
 
 # Monitor logs
 tail -f trading_log.txt
+
+# Check running processes
+pgrep -a python3
 ```
 
 ## Architecture
 
-This is a single-file autonomous trading agent (`main.py`). There is no test suite.
+Two main files: `main.py` (trading agent) and `dashboard.py` (FastAPI web dashboard). No test suite.
 
-**`SentinelAlpha` class** (the only class) has these responsibilities:
-- **Wallet init** (`_init_wallet`): Connects to the Coinbase CDP wallet via `CdpEvmWalletProvider`. Persists the wallet address to `wallet_data.json` so the same on-chain wallet is reused across restarts. Uses a fixed idempotency key (`sentinel_alpha_main_wallet`) to prevent duplicate wallet creation.
-- **Price fetching** (`fetch_prices`): Calls the public Coinbase REST API for BTC/USD and ETH/USD spot prices every 5 minutes. Stores a rolling window in an in-memory pandas DataFrame.
-- **Signal generation** (`calculate_z_score`): Computes the Z-Score of the BTC/ETH price ratio over the rolling window. BUY when Z < -2.0 (BTC undervalued), SELL when Z > +2.0 (BTC overvalued).
-- **Trade execution** (`execute_trade`): In `DRY_RUN=true` (default), logs shadow trades only. When live, invokes the AgentKit `swap` action to exchange between native ETH and `cbBTC` (ERC-20 on Base).
-- **Risk controls**: 1-hour cooldown between trades, 50-trade daily cap, and a daily stop-loss (halts the agent if ETH balance drops >5% from the day's starting value).
+**`SentinelAlpha` class** (`main.py`) responsibilities:
+- **Wallet init** (`_init_wallet`): Connects to the Coinbase CDP wallet via `CdpEvmWalletProvider`. Persists wallet address to `wallet_data.json`. Uses fixed idempotency key (`sentinel_alpha_main_wallet`).
+- **Price fetching** (`fetch_prices`): Calls Coinbase REST API for BTC/USD, ETH/USD, cbETH/USD every 5 minutes. Stores rolling window per pair in pandas DataFrames.
+- **Signal generation** (`calculate_z_score`): Z-Score of base/quote price ratio over rolling window. BUY when Z < -threshold, SELL when Z > +threshold.
+- **Adaptive threshold** (`_adaptive_threshold`): Scales threshold 0.5×–2.0× based on recent vs. full-window volatility.
+- **Cointegration gate** (`_check_cointegration`): Engle-Granger test; pauses trading if pair is not cointegrated (p ≥ COINT_P_THRESHOLD).
+- **Trade sizing** (`_scaled_trade_pct`): Linear ramp from TRADE_SIZE_PCT (at threshold) to TRADE_SIZE_MAX_PCT (at threshold + TRADE_SCALE_RAMP).
+- **Trade execution** (`execute_trade`): DRY_RUN=true logs shadow trades only. Live mode uses AgentKit `swap` action (cbBTC and cbETH on Base).
+- **Aave yield** (`_aave_supply_eth`, `_aave_withdraw_eth`, `_deposit_idle_eth`, `_ensure_eth_available`): Deposits idle ETH to Aave V3 as WETH for yield. Withdraws before BUY trades automatically.
+- **Notifications** (`_notify`): Sends Telegram messages on trade execution, stop-loss, daily summary, and errors. No-op if token/chat ID not set.
+- **Risk controls**: 1-hour cooldown, 50-trade daily cap, daily stop-loss (halts if ETH-equiv portfolio drops >5% from day start).
+
+**`dashboard.py`** — FastAPI server on port 8000. Reads `trading_log.txt`, `trades.json`, `daily_summary.json`, `price_history.json`. Three-tab UI: Overview, Aave Yield, Log.
+
+## Trading Pairs
+
+| Pair | Base Token | Quote | Networks |
+|---|---|---|---|
+| BTC/ETH | cbBTC (ERC-20) | native ETH | all |
+| cbETH/ETH | cbETH (ERC-20) | native ETH | base-mainnet only |
+
+Capital is split equally between enabled pairs.
 
 ## Key Environment Variables
 
 | Variable | Default | Purpose |
 |---|---|---|
 | `CDP_API_KEY_ID` | — | Coinbase CDP API key name |
-| `CDP_API_KEY_SECRET` | — | PEM private key (use `\n` for newlines) |
+| `CDP_API_KEY_SECRET` | — | PEM private key (`\n` for newlines) |
 | `CDP_WALLET_SECRET` | — | CDP server wallet secret |
 | `NETWORK_ID` | `base-sepolia` | `base-sepolia` or `base-mainnet` |
 | `DRY_RUN` | `true` | `false` to enable live on-chain swaps |
-| `Z_SCORE_THRESHOLD` | `2.0` | Signal sensitivity |
-| `WINDOW_SIZE_HOURS` | `24` | Rolling window for Z-Score calculation |
-| `TRADE_SIZE_PCT` | `0.02` | Fraction of balance per trade |
+| `RPC_URL` | — | Override default RPC (recommended: Alchemy/QuickNode) |
+| `Z_SCORE_THRESHOLD` | `2.0` | Base signal threshold |
+| `TRADE_SCALE_RAMP` | `1.0` | Z excess above threshold to reach max trade size |
+| `WINDOW_SIZE_HOURS` | `24` | Rolling window for Z-Score |
+| `TRADE_SIZE_PCT` | `0.10` | Base trade size (at threshold) |
+| `TRADE_SIZE_MAX_PCT` | `0.40` | Max trade size (at threshold + ramp) |
 | `DAILY_STOP_LOSS_PCT` | `0.05` | Max daily drawdown before halting |
+| `ADAPTIVE_THRESHOLD_WINDOW` | `12` | Recent price points for vol-regime detection |
+| `COINT_P_THRESHOLD` | `0.25` | Max p-value to consider a pair cointegrated |
+| `AAVE_ENABLED` | `false` | Enable idle ETH yield via Aave V3 |
+| `AAVE_POOL_ADDRESS` | `0xA238...` | Aave V3 Pool proxy on Base mainnet |
+| `AAVE_AWETH_ADDRESS` | `0xD4a0...` | aWETH token address on Base mainnet |
+| `AAVE_ETH_RESERVE` | `0.001` | ETH kept liquid (not deposited) for gas |
+| `AAVE_MIN_DEPOSIT` | `0.005` | Min ETH idle before depositing to Aave |
+| `TELEGRAM_BOT_TOKEN` | — | Telegram bot token from @BotFather |
+| `TELEGRAM_CHAT_ID` | — | Telegram chat ID to receive notifications |
 
 ## Token Addresses
 
-`TOKENS` dict in `main.py` maps network → token → address. cbBTC and WETH addresses differ between `base-mainnet` and `base-sepolia`. `NATIVE_ETH` uses the sentinel address `0xeeee...eeee`.
+`TOKENS` dict in `main.py` maps network → token → address. Addresses differ between mainnet and sepolia.
 
 ## Persistent Files
 
-- `wallet_data.json` — stores the on-chain wallet address between runs; mounted as a Docker volume
-- `trading_log.txt` — append-only trade/signal log; mounted as a Docker volume
+| File | Purpose | Migrate? |
+|---|---|---|
+| `wallet_data.json` | On-chain wallet address — **critical, do not lose** | Yes |
+| `trading_log.txt` | Append-only human-readable log | Optional |
+| `trades.json` | JSONL structured trade records | Yes |
+| `daily_summary.json` | JSONL daily snapshots | Yes |
+| `price_history.json` | Rolling price window cache | Optional |
+| `.env` | All credentials and config | Yes (chmod 600) |
 
-Both files must exist on the host before running Docker if you want to pre-seed or preserve them across container rebuilds.
+## Watchdog & Cron
+
+A cron job runs every 5 minutes to restart the agent if it dies:
+```
+*/5 * * * * cd /home/jeff/sentinel-alpha-p && pgrep -f 'python3 main.py' > /dev/null || nohup myenv/bin/python3 main.py >> trading_log.txt 2>&1
+```
+
+Weekly and monthly analysis reports also run via cron (`analyze.py`).
