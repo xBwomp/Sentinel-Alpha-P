@@ -12,6 +12,7 @@ An autonomous mean-reversion trading agent running on the **Coinbase Base Networ
 - [Telegram Notifications Setup](#telegram-notifications-setup)
 - [Aave Yield Setup](#aave-yield-setup)
 - [Daily Operations](#daily-operations)
+- [Troubleshooting](#troubleshooting)
 - [Architecture](#architecture)
 
 ---
@@ -24,7 +25,7 @@ Mean reversion on BTC/ETH and cbETH/ETH price ratios:
 - Trades are gated by an Engle-Granger cointegration check — paused if the pair is not statistically cointegrated
 - Adaptive threshold scales with volatility regime (0.5×–2.0× base)
 - Trade size ramps linearly with Z-score from `TRADE_SIZE_PCT` (at threshold) to `TRADE_SIZE_MAX_PCT` (at threshold + `TRADE_SCALE_RAMP`)
-- Daily stop-loss halts the agent if portfolio drops more than `DAILY_STOP_LOSS_PCT` from the day's starting value
+- Daily stop-loss halts the agent if portfolio drops more than `DAILY_STOP_LOSS_PCT` from the day's starting value — the loss must persist for 30 minutes before the agent truly halts (to avoid reacting to transient price swings). Once confirmed, the agent calls `sys.exit(1)`; **manual restart is required** — the watchdog will not restart it automatically
 
 ---
 
@@ -233,6 +234,23 @@ nohup myenv/bin/python3 dashboard.py >> dashboard_output.log 2>&1 &
 myenv/bin/python3 analyze.py
 myenv/bin/python3 analyze.py --monthly
 ```
+
+---
+
+## Troubleshooting
+
+### Agent stopped and watchdog didn't restart it
+If the agent halted due to a confirmed stop-loss, it exits with code 1. The watchdog cron only restarts the agent on unexpected crashes — a deliberate stop-loss halt requires a **manual restart**:
+```bash
+nohup myenv/bin/python3 main.py >> trading_log.txt 2>&1 &
+```
+Check the log for `STOP LOSS CONFIRMED` or `STOP LOSS TRIGGERED` to confirm this was the cause.
+
+### Aave withdraw fails with "Nonce too low"
+The CDP wallet tracks nonces locally. If a previous transaction was dropped or failed uncleanly, the local nonce can fall behind the on-chain state. The agent retries the transaction once automatically. If it still fails, wait for the next cycle — the nonce resyncs on the next successful transaction.
+
+### Stop-loss triggered but loss looks wrong
+The stop-loss measures total portfolio in ETH-equivalent. If `_get_aave_eth_balance()` fails during a cycle (RPC error), the Aave balance reads as 0, making the portfolio appear much smaller than it is. The agent skips the stop-loss check when balances are stale — but if an RPC error resolves mid-cycle, the balance may still appear low for that cycle. Review logs around the trigger time for `[Aave] Error reading aWETH balance` entries.
 
 ---
 

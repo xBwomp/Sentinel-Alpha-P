@@ -547,7 +547,7 @@ class SentinelAlpha:
             logger.error(f"[Aave] Supply error: {e}")
             return False
 
-    def _aave_withdraw_eth(self, amount_eth: float) -> bool:
+    def _aave_withdraw_eth(self, amount_eth: float, _retry: bool = True) -> bool:
         """Withdraw WETH from Aave Pool, unwrap to native ETH. Returns True on success."""
         if not AAVE_ENABLED or DRY_RUN or amount_eth <= 0:
             return True
@@ -581,6 +581,13 @@ class SentinelAlpha:
             return True
         except Exception as e:
             logger.error(f"[Aave] Withdraw error: {e}")
+            # CDP sometimes returns "Nonce too low" when the local nonce drifts out of
+            # sync with the chain (e.g. after a failed or dropped transaction).
+            # Re-creating the transaction once is sufficient to resync.
+            if _retry and "nonce too low" in str(e).lower():
+                logger.info("[Aave] Retrying withdraw after nonce error...")
+                time.sleep(2)
+                return self._aave_withdraw_eth(amount_eth, _retry=False)
             return False
 
     def _deposit_idle_eth(self):
@@ -754,7 +761,8 @@ class SentinelAlpha:
                     f"{elapsed / 60:.0f} min).\n"
                     f"Agent has halted. Manual restart required."
                 )
-                return False
+                import sys
+                sys.exit(1)
             else:
                 logger.warning(
                     f"Stop-loss still breached ({drop:.2%}). "
@@ -1040,7 +1048,8 @@ class SentinelAlpha:
                 self.fetch_prices()
 
                 if not self.check_stop_loss():
-                    break
+                    time.sleep(300)
+                    continue
 
                 for pair in self.pairs:
                     if not pair.is_enabled():

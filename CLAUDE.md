@@ -33,9 +33,9 @@ Two main files: `main.py` (trading agent) and `dashboard.py` (FastAPI web dashbo
 - **Cointegration gate** (`_check_cointegration`): Engle-Granger test; pauses trading if pair is not cointegrated (p ≥ COINT_P_THRESHOLD).
 - **Trade sizing** (`_scaled_trade_pct`): Linear ramp from TRADE_SIZE_PCT (at threshold) to TRADE_SIZE_MAX_PCT (at threshold + TRADE_SCALE_RAMP).
 - **Trade execution** (`execute_trade`): DRY_RUN=true logs shadow trades only. Live mode uses AgentKit `swap` action (cbBTC and cbETH on Base).
-- **Aave yield** (`_aave_supply_eth`, `_aave_withdraw_eth`, `_deposit_idle_eth`, `_ensure_eth_available`): Deposits idle ETH to Aave V3 as WETH for yield. Withdraws before BUY trades automatically.
+- **Aave yield** (`_aave_supply_eth`, `_aave_withdraw_eth`, `_deposit_idle_eth`, `_ensure_eth_available`): Deposits idle ETH to Aave V3 as WETH for yield. Withdraws before BUY trades automatically. `_aave_withdraw_eth` retries once on "Nonce too low" CDP errors (nonce can drift after dropped/failed txns).
 - **Notifications** (`_notify`): Sends Telegram messages on trade execution, stop-loss, daily summary, and errors. No-op if token/chat ID not set.
-- **Risk controls**: 1-hour cooldown, 50-trade daily cap, daily stop-loss (halts if ETH-equiv portfolio drops >5% from day start).
+- **Risk controls**: 1-hour cooldown, 50-trade daily cap, daily stop-loss (`check_stop_loss`): if ETH-equiv portfolio drops >5% from day start, trading pauses and the loop continues sleeping every 5 min. If the loss persists for 30 minutes (`STOP_LOSS_CONFIRM_SECS=1800`), the agent calls `sys.exit(1)` — the watchdog will NOT restart it (by design; manual restart required after a true halt). Stop-loss check is skipped entirely when prices or balances are stale to avoid false halts.
 
 **`dashboard.py`** — FastAPI server on port 8000. Reads `trading_log.txt`, `trades.json`, `daily_summary.json`, `price_history.json`. Three-tab UI: Overview, Aave Yield, Log.
 
