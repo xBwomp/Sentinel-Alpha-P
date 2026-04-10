@@ -868,6 +868,7 @@ class SentinelAlpha:
 
         date_str = self.last_summary_date.isoformat()
 
+        pair_lines = []
         for pair in self.pairs:
             if not pair.z_scores_today:
                 pair.reset_daily_counters()
@@ -898,13 +899,19 @@ class SentinelAlpha:
                 f"[{pair.name}] Daily summary: {pair.trades_executed_today} trades, "
                 f"portfolio={portfolio_eth_value:.6f} ETH-equiv"
             )
-            self._notify(
-                f"📊 <b>Daily Summary [{pair.name}]</b> — {date_str}\n"
-                f"Trades: {pair.trades_executed_today} | Ignored: {pair.signals_ignored_cooldown_today + pair.signals_ignored_limit_today}\n"
-                f"Z-Score range: {min(pair.z_scores_today):+.2f} → {max(pair.z_scores_today):+.2f}\n"
-                f"Portfolio: {portfolio_eth_value:.6f} ETH-equiv"
+            pair_lines.append(
+                f"<b>{pair.name}</b>: {pair.trades_executed_today} trades | "
+                f"ignored: {pair.signals_ignored_cooldown_today + pair.signals_ignored_limit_today} | "
+                f"Z: {min(pair.z_scores_today):+.2f}→{max(pair.z_scores_today):+.2f}"
             )
             pair.reset_daily_counters()
+
+        if pair_lines:
+            self._notify(
+                f"📊 <b>Daily Summary</b> — {date_str}\n"
+                + "\n".join(pair_lines) + "\n"
+                f"Portfolio: {portfolio_eth_value:.6f} ETH-equiv"
+            )
 
     # ── Trade Execution ───────────────────────────────────────────────────────
 
