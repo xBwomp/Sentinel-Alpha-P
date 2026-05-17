@@ -9,7 +9,7 @@ from typing import Optional, List
 from datetime import datetime, timedelta
 from decimal import Decimal
 from dotenv import load_dotenv
-from statsmodels.tsa.stattools import coint
+from statsmodels.tsa.stattools import adfuller
 import asyncio
 from web3 import Web3
 
@@ -56,15 +56,25 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 AAVE_ENABLED = os.getenv("AAVE_ENABLED", "false").lower() == "true"
 AAVE_POOL_ADDRESS  = os.getenv("AAVE_POOL_ADDRESS",  "0xA238Dd80C259a72e81d7e4664a9801593F98d1c5")
 AAVE_AWETH_ADDRESS = os.getenv("AAVE_AWETH_ADDRESS", "0xD4a0e0b9149BCee3C920d2E00b5dE09138fd8bb7")
-AAVE_ETH_RESERVE   = float(os.getenv("AAVE_ETH_RESERVE",  "0.001"))  # ETH kept liquid for gas
+AAVE_ETH_RESERVE   = float(os.getenv("AAVE_ETH_RESERVE",  "0.005"))  # ETH kept liquid for gas
 AAVE_MIN_DEPOSIT   = float(os.getenv("AAVE_MIN_DEPOSIT",   "0.005"))  # minimum worth depositing
 
 # Guardrails
-COOLDOWN_PERIOD = timedelta(hours=1)
 MIN_TRADE_ETH = 0.0001
 COINT_MIN_POINTS = int(os.getenv("COINT_MIN_POINTS", 20))
 COINT_P_THRESHOLD = float(os.getenv("COINT_P_THRESHOLD", 0.25))
 ADAPTIVE_THRESHOLD_WINDOW = int(os.getenv("ADAPTIVE_THRESHOLD_WINDOW", 12))
+MIN_EFFECTIVE_THRESHOLD = float(os.getenv("MIN_EFFECTIVE_THRESHOLD", "1.5"))
+SLIPPAGE_GUARD_PCT = float(os.getenv("SLIPPAGE_GUARD_PCT", "0.8"))
+STOP_LOSS_WARN_PCT = float(os.getenv("STOP_LOSS_WARN_PCT", "0.04"))
+COOLDOWN_PERIOD = timedelta(minutes=int(os.getenv("COOLDOWN_MINUTES", "90")))
+
+# CoinGecko symbol → ID map (used as price feed fallback when Coinbase API fails)
+COINGECKO_IDS = {
+    "ETH":    "ethereum",
+    "CBETH":  "coinbase-wrapped-staked-eth",
+    "WSTETH": "wrapped-staked-ether",
+}
 
 # ABIs
 WETH_ABI = [
@@ -85,14 +95,15 @@ AAVE_POOL_ABI = [
 NATIVE_ETH = "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
 TOKENS = {
     "base-mainnet": {
-        "cbBTC": "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf",
-        "WETH":  "0x4200000000000000000000000000000000000006",
-        "cbETH": "0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22",
+        "cbBTC":  "0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf",
+        "WETH":   "0x4200000000000000000000000000000000000006",
+        "cbETH":  "0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22",
+        "wstETH": "0xc1CBa3fCea344f92D9239c08C0568f6F2F0ee452",
     },
     "base-sepolia": {
-        "cbBTC": "0xcbB7C0006F23900c38EB856149F799620fcb8A4a",
-        "WETH":  "0x4200000000000000000000000000000000000006",
-        "cbETH": "0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22",
+        "cbBTC":  "0xcbB7C0006F23900c38EB856149F799620fcb8A4a",
+        "WETH":   "0x4200000000000000000000000000000000000006",
+        "cbETH":  "0x2Ae3F1Ec7F1F5012CFEab0185bfc7aa3cf0DEc22",
     }
 }
 
@@ -142,6 +153,10 @@ class TradingPair:
     signals_ignored_cooldown_today: int = 0
     signals_ignored_limit_today: int = 0
 
+    # Per-pair P&L tracking (ratio at last trade, for measuring reversion)
+    _last_trade_signal: Optional[str] = None
+    _last_trade_ratio: Optional[float] = None
+
     def is_enabled(self) -> bool:
         return not self.enabled_networks or NETWORK_ID in self.enabled_networks
 
@@ -169,28 +184,25 @@ class SentinelAlpha:
         self.actions = {action.name: action for action in self.agent_kit.get_actions()}
 
         # ── Define trading pairs ──────────────────────────────────────────────
-        num_pairs = 2
-        fraction = round(1.0 / num_pairs, 4)
-
         self.pairs: List[TradingPair] = [
-            TradingPair(
-                name="BTC/ETH",
-                base_symbol="BTC",
-                quote_symbol="ETH",
-                base_token=TOKENS[NETWORK_ID]["cbBTC"],
-                quote_token=NATIVE_ETH,
-                capital_fraction=fraction,
-                min_base_amount=0.0001,      # ~$7 at $70k BTC
-                enabled_networks=[],          # all networks
-            ),
             TradingPair(
                 name="cbETH/ETH",
                 base_symbol="CBETH",
                 quote_symbol="ETH",
                 base_token=TOKENS[NETWORK_ID]["cbETH"],
                 quote_token=NATIVE_ETH,
-                capital_fraction=fraction,
+                capital_fraction=0.5,
                 min_base_amount=0.0001,      # ~$0.20 at $2k ETH
+                enabled_networks=["base-mainnet"],  # no testnet liquidity
+            ),
+            TradingPair(
+                name="wstETH/ETH",
+                base_symbol="WSTETH",
+                quote_symbol="ETH",
+                base_token=TOKENS[NETWORK_ID].get("wstETH", ""),
+                quote_token=NATIVE_ETH,
+                capital_fraction=0.5,
+                min_base_amount=0.0001,      # ~$0.30 at $3k wstETH
                 enabled_networks=["base-mainnet"],  # no testnet liquidity
             ),
         ]
@@ -199,6 +211,8 @@ class SentinelAlpha:
         self.initial_daily_balance: Optional[float] = None
         self.daily_reset_date: Optional[object] = None
         self.last_summary_date = datetime.now().date()
+        self._aave_supply_failures: int = 0          # consecutive supply failures
+        self._aave_backoff_until: Optional[float] = None  # time.time() deadline
         self._balance_cache: dict = {}  # token_address -> (value, timestamp)
 
         # ── Network health / stop-loss guards ────────────────────────────────
@@ -206,6 +220,7 @@ class SentinelAlpha:
         self._stale_balance_used: bool = False
         self._aave_balance_cache: Optional[float] = None  # last known good Aave balance
         self._stop_loss_first_seen: Optional[datetime] = None  # cooldown start
+        self._stop_loss_warned: bool = False  # proximity warning sent this day
 
         self._load_price_history()
         self._seed_trade_state()
@@ -313,48 +328,83 @@ class SentinelAlpha:
 
     # ── Prices ────────────────────────────────────────────────────────────────
 
-    def fetch_prices(self):
-        """Fetch spot prices for all unique symbols across active pairs, update histories."""
+    def _fetch_prices_coingecko(self, symbols: set) -> dict:
+        """Fallback price fetcher via CoinGecko public API."""
         import requests
+        ids_needed = [COINGECKO_IDS[s] for s in symbols if s in COINGECKO_IDS]
+        if not ids_needed:
+            return {}
+        resp = requests.get(
+            "https://api.coingecko.com/api/v3/simple/price",
+            params={"ids": ",".join(ids_needed), "vs_currencies": "usd"},
+            timeout=10,
+        ).json()
+        id_to_sym = {v: k for k, v in COINGECKO_IDS.items()}
+        return {id_to_sym[cg_id]: float(data["usd"])
+                for cg_id, data in resp.items() if cg_id in id_to_sym}
+
+    def fetch_prices(self):
+        """Fetch spot prices for all unique symbols across active pairs, update histories.
+        Falls back to CoinGecko if Coinbase API fails."""
+        import requests
+        symbols = {sym for pair in self.pairs if pair.is_enabled()
+                   for sym in (pair.base_symbol, pair.quote_symbol)}
+        prices: dict[str, float] = {}
+
+        # Primary: Coinbase REST
+        coinbase_ok = True
         try:
-            # Deduplicate symbols so ETH-USD is fetched once even if used by multiple pairs
-            symbols = {sym for pair in self.pairs if pair.is_enabled()
-                       for sym in (pair.base_symbol, pair.quote_symbol)}
-            prices: dict[str, float] = {}
             for sym in symbols:
                 resp = requests.get(
                     f"https://api.coinbase.com/v2/prices/{sym}-USD/spot", timeout=10
                 ).json()
                 prices[sym] = float(resp['data']['amount'])
-
-            now = datetime.now()
-            cutoff = now - timedelta(hours=WINDOW_SIZE_HOURS)
-
-            for pair in self.pairs:
-                if not pair.is_enabled():
-                    continue
-                new_row = pd.DataFrame([{
-                    "timestamp": now,
-                    "base_price": prices[pair.base_symbol],
-                    "quote_price": prices[pair.quote_symbol],
-                }])
-                pair.price_history = pd.concat(
-                    [pair.price_history, new_row], ignore_index=True
-                )
-                pair.price_history = pair.price_history[
-                    pair.price_history["timestamp"] > cutoff
-                ]
-
-            price_log = " | ".join(
-                f"{sym}: ${prices[sym]:,.2f}" for sym in sorted(prices)
-            )
-            logger.info(f"Price Update — {price_log}")
-            self._consecutive_price_failures = 0
-            self._save_price_history()
-
         except Exception as e:
+            coinbase_ok = False
+            logger.error(f"Error fetching prices from Coinbase: {e}")
+
+        # Fallback: CoinGecko (only for symbols we failed to fetch)
+        if not coinbase_ok:
+            missing = symbols - set(prices.keys())
+            try:
+                fallback = self._fetch_prices_coingecko(missing)
+                if fallback:
+                    prices.update(fallback)
+                    logger.info(f"CoinGecko fallback provided prices for: {sorted(fallback.keys())}")
+            except Exception as fe:
+                logger.error(f"CoinGecko fallback also failed: {fe}")
+
+        if not prices:
             self._consecutive_price_failures += 1
-            logger.error(f"Error fetching prices: {e}")
+            return
+
+        now = datetime.now()
+        cutoff = now - timedelta(hours=WINDOW_SIZE_HOURS)
+
+        for pair in self.pairs:
+            if not pair.is_enabled():
+                continue
+            if pair.base_symbol not in prices or pair.quote_symbol not in prices:
+                continue
+            new_row = pd.DataFrame([{
+                "timestamp": now,
+                "base_price": prices[pair.base_symbol],
+                "quote_price": prices[pair.quote_symbol],
+            }])
+            pair.price_history = pd.concat(
+                [pair.price_history, new_row], ignore_index=True
+            )
+            pair.price_history = pair.price_history[
+                pair.price_history["timestamp"] > cutoff
+            ]
+
+        price_log = " | ".join(
+            f"{sym}: ${prices[sym]:,.2f}" for sym in sorted(prices)
+        )
+        source = "Coinbase" if coinbase_ok else "CoinGecko (fallback)"
+        logger.info(f"Price Update [{source}] — {price_log}")
+        self._consecutive_price_failures = 0
+        self._save_price_history()
 
     # ── Strategy ──────────────────────────────────────────────────────────────
 
@@ -371,39 +421,38 @@ class SentinelAlpha:
         return float((df['ratio'].iloc[-1] - rolling_mean) / rolling_std)
 
     def _check_cointegration(self, pair: TradingPair):
-        """Engle-Granger cointegration test, cached per pair (~hourly refresh)."""
+        """ADF stationarity test on the price ratio, cached per pair (~hourly refresh)."""
         n = len(pair.price_history)
         if n < COINT_MIN_POINTS:
             return False, None
         if pair._coint_p_value is not None and n - pair._coint_last_size < 12:
             return pair._coint_p_value < COINT_P_THRESHOLD, pair._coint_p_value
         try:
-            base  = pair.price_history["base_price"].values
-            quote = pair.price_history["quote_price"].values
-            _, p_value, _ = coint(base, quote)
+            ratio = (pair.price_history["base_price"] / pair.price_history["quote_price"]).values
+            _, p_value, *_ = adfuller(ratio, autolag="AIC")
             pair._coint_p_value = p_value
             pair._coint_last_size = n
             valid = p_value < COINT_P_THRESHOLD
             logger.info(
-                f"[{pair.name}] Cointegration check: p={p_value:.4f} "
+                f"[{pair.name}] Stationarity check (ADF): p={p_value:.4f} "
                 f"({'VALID' if valid else 'INVALID — trading paused'})"
             )
             return valid, p_value
         except Exception as e:
-            logger.warning(f"[{pair.name}] Cointegration test failed: {e}. Failing open.")
+            logger.warning(f"[{pair.name}] Stationarity test failed: {e}. Failing open.")
             return True, None
 
     def _adaptive_threshold(self, pair: TradingPair) -> float:
-        """Z-score threshold scaled to current volatility regime."""
+        """Z-score threshold scaled to current volatility regime, with a floor to cover slippage costs."""
         if len(pair.price_history) < ADAPTIVE_THRESHOLD_WINDOW + 2:
-            return Z_SCORE_THRESHOLD
+            return max(Z_SCORE_THRESHOLD, MIN_EFFECTIVE_THRESHOLD)
         ratio = pair.price_history["base_price"] / pair.price_history["quote_price"]
         full_std = ratio.std()
         recent_std = ratio.iloc[-ADAPTIVE_THRESHOLD_WINDOW:].std()
         if full_std == 0 or np.isnan(full_std) or np.isnan(recent_std):
-            return Z_SCORE_THRESHOLD
-        scale = max(0.5, min(2.0, recent_std / full_std))
-        return Z_SCORE_THRESHOLD * scale
+            return max(Z_SCORE_THRESHOLD, MIN_EFFECTIVE_THRESHOLD)
+        scale = max(0.5, min(1.25, recent_std / full_std))
+        return max(Z_SCORE_THRESHOLD * scale, MIN_EFFECTIVE_THRESHOLD)
 
     def _scaled_trade_pct(self, z_score: float) -> float:
         excess = abs(z_score) - Z_SCORE_THRESHOLD
@@ -533,14 +582,36 @@ class SentinelAlpha:
 
             # 3. Supply WETH to Pool
             pool = w3.eth.contract(address=pool_addr, abi=AAVE_POOL_ABI)
-            tx = self.wallet_provider.send_transaction(
-                {"to": pool_addr, "data": pool.encode_abi("supply", args=[weth_addr, amount_wei, wallet, 0]), "value": 0}
-            )
-            if not self._tx_succeeded(self.wallet_provider.wait_for_transaction_receipt(tx)):
-                logger.error(f"[Aave] Supply failed | tx: {tx}")
+            try:
+                tx = self.wallet_provider.send_transaction(
+                    {"to": pool_addr, "data": pool.encode_abi("supply", args=[weth_addr, amount_wei, wallet, 0]), "value": 0}
+                )
+                supply_ok = self._tx_succeeded(self.wallet_provider.wait_for_transaction_receipt(tx))
+            except Exception as supply_err:
+                logger.error(f"[Aave] Supply error: {supply_err}")
+                supply_ok = False
+
+            if not supply_ok:
+                # ETH was already wrapped to WETH — unwrap it back so it stays in
+                # native ETH and doesn't disappear from the portfolio calculation.
+                logger.warning("[Aave] Supply failed after wrap — unwrapping WETH back to ETH.")
+                try:
+                    unwrap_tx = self.wallet_provider.send_transaction(
+                        {"to": weth_addr, "data": weth.encode_abi("withdraw", args=[amount_wei]), "value": 0}
+                    )
+                    if self._tx_succeeded(self.wallet_provider.wait_for_transaction_receipt(unwrap_tx)):
+                        logger.info("[Aave] WETH unwrapped back to ETH successfully.")
+                    else:
+                        logger.error("[Aave] WETH unwrap failed — WETH may be stranded in wallet.")
+                except Exception as unwrap_err:
+                    logger.error(f"[Aave] WETH unwrap error: {unwrap_err} — WETH may be stranded.")
+                # Clear both caches so portfolio calc picks up the real on-chain state
+                self._balance_cache.pop(NATIVE_ETH, None)
+                self._balance_cache.pop(weth_addr, None)
                 return False
 
             self._balance_cache.pop(NATIVE_ETH, None)
+            self._balance_cache.pop(weth_addr, None)
             logger.info(f"[Aave] Supplied {amount_eth:.6f} ETH. aWETH balance: {self._get_aave_eth_balance():.6f}")
             return True
         except Exception as e:
@@ -590,16 +661,32 @@ class SentinelAlpha:
                 return self._aave_withdraw_eth(amount_eth, _retry=False)
             return False
 
+    _AAVE_MAX_FAILURES = 3        # pause deposits after this many consecutive failures
+    _AAVE_BACKOFF_SECS = 3600    # back off for 1 hour before retrying
+
     def _deposit_idle_eth(self):
         """Deposit ETH above reserve into Aave for yield. No-op if disabled or dry run."""
         if not AAVE_ENABLED or DRY_RUN:
+            return
+        # Circuit breaker: stop trying if supply has failed repeatedly
+        if self._aave_backoff_until and time.time() < self._aave_backoff_until:
             return
         try:
             eth_balance = self.get_token_balance(NATIVE_ETH, force_refresh=True)
             idle = eth_balance - AAVE_ETH_RESERVE
             if idle >= AAVE_MIN_DEPOSIT:
                 logger.info(f"[Aave] Depositing {idle:.6f} idle ETH (keeping {AAVE_ETH_RESERVE} ETH reserve).")
-                self._aave_supply_eth(idle)
+                if self._aave_supply_eth(idle):
+                    self._aave_supply_failures = 0
+                    self._aave_backoff_until = None
+                else:
+                    self._aave_supply_failures += 1
+                    if self._aave_supply_failures >= self._AAVE_MAX_FAILURES:
+                        self._aave_backoff_until = time.time() + self._AAVE_BACKOFF_SECS
+                        logger.warning(
+                            f"[Aave] Supply failed {self._aave_supply_failures} times in a row. "
+                            f"Pausing deposits for {self._AAVE_BACKOFF_SECS // 60} min."
+                        )
         except Exception as e:
             logger.error(f"[Aave] Error depositing idle ETH: {e}")
 
@@ -674,11 +761,13 @@ class SentinelAlpha:
                 break
 
         eth_balance = self.get_token_balance(NATIVE_ETH)
+        weth_addr = TOKENS[NETWORK_ID].get("WETH", "")
+        weth_balance = self.get_token_balance(weth_addr, force_refresh=True) if (AAVE_ENABLED and weth_addr) else 0.0
         aave_eth = self._get_aave_eth_balance()
         if eth_price_usd == 0:
-            return eth_balance + aave_eth  # fallback before first price fetch
+            return eth_balance + weth_balance + aave_eth  # fallback before first price fetch
 
-        total = eth_balance + aave_eth
+        total = eth_balance + weth_balance + aave_eth
         seen_tokens: set[str] = set()
         for pair in self.pairs:
             if not pair.is_enabled() or pair.base_token in seen_tokens:
@@ -723,6 +812,7 @@ class SentinelAlpha:
             self.initial_daily_balance = portfolio_value
             self.daily_reset_date = today_utc
             self._stop_loss_first_seen = None
+            self._stop_loss_warned = False
             logger.info(f"Daily balance reset: {portfolio_value:.6f} ETH-equiv")
             return True
 
@@ -730,6 +820,22 @@ class SentinelAlpha:
             return True
 
         drop = (self.initial_daily_balance - portfolio_value) / self.initial_daily_balance
+
+        # Proximity warning: alert before the full stop-loss threshold is hit
+        if drop > STOP_LOSS_WARN_PCT and not self._stop_loss_warned and drop <= DAILY_STOP_LOSS_PCT:
+            self._stop_loss_warned = True
+            logger.warning(
+                f"Stop-loss proximity warning: portfolio down {drop:.2%} "
+                f"(halt triggers at {DAILY_STOP_LOSS_PCT:.0%})."
+            )
+            self._notify(
+                f"⚠️ <b>Stop-Loss Proximity</b>\n"
+                f"Portfolio down {drop:.2%} today (halt at {DAILY_STOP_LOSS_PCT:.0%}).\n"
+                f"Value: {portfolio_value:.5f} ETH — still trading, monitoring closely."
+            )
+        elif drop <= STOP_LOSS_WARN_PCT:
+            self._stop_loss_warned = False  # reset if we recover above the warn threshold
+
         if drop > DAILY_STOP_LOSS_PCT:
             now = datetime.utcnow()
             if self._stop_loss_first_seen is None:
@@ -743,6 +849,7 @@ class SentinelAlpha:
                 self._notify(
                     f"⚠️ <b>STOP LOSS WARNING</b>\n"
                     f"Portfolio down {drop:.2%} today (threshold: {DAILY_STOP_LOSS_PCT:.0%}).\n"
+                    f"Value: {portfolio_value:.5f} ETH\n"
                     f"Trading paused. Agent will halt in "
                     f"{self.STOP_LOSS_CONFIRM_SECS // 60} min if loss is confirmed."
                 )
@@ -759,6 +866,7 @@ class SentinelAlpha:
                     f"🚨 <b>STOP LOSS TRIGGERED</b>\n"
                     f"Portfolio dropped {drop:.2%} today (sustained "
                     f"{elapsed / 60:.0f} min).\n"
+                    f"Value: {portfolio_value:.5f} ETH\n"
                     f"Agent has halted. Manual restart required."
                 )
                 import sys
@@ -778,10 +886,12 @@ class SentinelAlpha:
         return True
 
     def _seed_trade_state(self):
-        """Restore per-pair cooldown state from trades.json across restarts."""
+        """Restore per-pair cooldown and P&L state from trades.json across restarts."""
         if not os.path.exists(TRADES_FILE):
             return
         pair_map = {p.name: p for p in self.pairs}
+        # Track the latest record per pair for P&L seeding
+        latest_per_pair: dict = {}
         try:
             cutoff = datetime.now() - timedelta(days=1)
             with open(TRADES_FILE) as f:
@@ -800,13 +910,20 @@ class SentinelAlpha:
                             pair.trades_in_last_24h.append(ts)
                         if ts > pair.last_trade_time:
                             pair.last_trade_time = ts
+                            latest_per_pair[pair_name] = record
                     except (json.JSONDecodeError, KeyError, ValueError):
                         continue
+
             for pair in self.pairs:
+                last = latest_per_pair.get(pair.name)
+                if last:
+                    pair._last_trade_signal = last.get("signal")
+                    pair._last_trade_ratio = last.get("ratio")
                 if pair.trades_in_last_24h:
                     logger.info(
                         f"[{pair.name}] Seeded {len(pair.trades_in_last_24h)} recent trades. "
-                        f"Last trade: {pair.last_trade_time}"
+                        f"Last trade: {pair.last_trade_time} | "
+                        f"last signal: {pair._last_trade_signal} @ ratio {pair._last_trade_ratio}"
                     )
         except Exception as e:
             logger.warning(f"Could not seed trade state: {e}")
@@ -830,6 +947,15 @@ class SentinelAlpha:
             if expected_to > 0:
                 slippage_pct = round((actual_to - expected_to) / expected_to * 100, 4)
 
+        # P&L tracking: ratio change since last trade on this pair
+        prev_ratio = pair._last_trade_ratio
+        prev_signal = pair._last_trade_signal
+        ratio_chg_pct = None
+        if prev_ratio and prev_ratio > 0:
+            ratio_chg_pct = round((ratio - prev_ratio) / prev_ratio * 100, 4)
+        pair._last_trade_ratio = ratio
+        pair._last_trade_signal = signal
+
         portfolio_eth_value = self._get_portfolio_eth_value()
 
         entry = {
@@ -847,6 +973,9 @@ class SentinelAlpha:
             "actual_from_amount": actual_from,
             "actual_to_amount": actual_to,
             "slippage_pct": slippage_pct,
+            "prev_signal": prev_signal,
+            "prev_ratio": round(prev_ratio, 6) if prev_ratio else None,
+            "ratio_chg_pct": ratio_chg_pct,
             "portfolio_eth_value": round(portfolio_eth_value, 8),
             "dry_run": DRY_RUN,
         }
@@ -907,10 +1036,16 @@ class SentinelAlpha:
             pair.reset_daily_counters()
 
         if pair_lines:
+            eth_px_summary = 0.0
+            for p in self.pairs:
+                if p.quote_symbol == "ETH" and len(p.price_history) > 0:
+                    eth_px_summary = float(p.price_history.iloc[-1]['quote_price'])
+                    break
+            portfolio_usd_summary = portfolio_eth_value * eth_px_summary
             self._notify(
                 f"📊 <b>Daily Summary</b> — {date_str}\n"
                 + "\n".join(pair_lines) + "\n"
-                f"Portfolio: {portfolio_eth_value:.6f} ETH-equiv"
+                f"Portfolio: {portfolio_eth_value:.5f} ETH (${portfolio_usd_summary:,.2f})"
             )
 
     # ── Trade Execution ───────────────────────────────────────────────────────
@@ -931,6 +1066,20 @@ class SentinelAlpha:
             logger.info(f"[{pair.name}] {signal} ignored — cooldown active.")
             pair.signals_ignored_cooldown_today += 1
             return
+
+        # Slippage guard: skip if expected mean-reversion gain doesn't justify round-trip cost
+        if len(pair.price_history) >= 2:
+            _ratio = pair.price_history["base_price"] / pair.price_history["quote_price"]
+            _ratio_std = _ratio.std()
+            _ratio_mean = _ratio.mean()
+            if _ratio_mean > 0 and not np.isnan(_ratio_std):
+                expected_reversion_pct = abs(z_score) * _ratio_std / _ratio_mean * 100
+                if expected_reversion_pct < SLIPPAGE_GUARD_PCT:
+                    logger.info(
+                        f"[{pair.name}] {signal} skipped — expected reversion "
+                        f"({expected_reversion_pct:.3f}%) below slippage guard ({SLIPPAGE_GUARD_PCT}%)"
+                    )
+                    return
 
         try:
             scaled_pct = self._scaled_trade_pct(z_score)
@@ -1000,6 +1149,7 @@ class SentinelAlpha:
 
                 if not result.get("success"):
                     logger.error(f"[{pair.name}] Swap failed: {result.get('error', 'unknown')}")
+                    pair.last_trade_time = now
                     return
 
                 try:
@@ -1018,10 +1168,14 @@ class SentinelAlpha:
             pair.trades_executed_today += 1
             self._log_trade_structured(pair, signal, z_score, trade_amount, actual_from, actual_to)
             emoji = "🟢" if signal == "BUY" else "🔴"
+            portfolio_eth = self._get_portfolio_eth_value()
+            eth_px = float(pair.price_history.iloc[-1]['quote_price']) if len(pair.price_history) > 0 else 0.0
+            portfolio_usd = portfolio_eth * eth_px
             self._notify(
                 f"{emoji} <b>{signal} {pair.base_symbol}</b> [{pair.name}]\n"
                 f"Amount: {trade_amount:.6f} {pair.quote_symbol if signal == 'BUY' else pair.base_symbol}\n"
-                f"Z-Score: {z_score:+.4f} | DRY_RUN: {DRY_RUN}"
+                f"Z-Score: {z_score:+.4f} | DRY_RUN: {DRY_RUN}\n"
+                f"Portfolio: {portfolio_eth:.5f} ETH (${portfolio_usd:,.2f})"
             )
 
         except Exception as e:
@@ -1037,6 +1191,27 @@ class SentinelAlpha:
         )
         if AAVE_ENABLED:
             logger.info(f"[Aave] Yield enabled. Current aWETH balance: {self._get_aave_eth_balance():.6f} ETH")
+        # Always recover any WETH stranded by a previous failed supply attempt.
+        weth_addr = TOKENS[NETWORK_ID]["WETH"]
+        stranded = self.get_token_balance(weth_addr, force_refresh=True)
+        if stranded > 0.0001:
+            logger.warning(f"[Aave] Found {stranded:.6f} stranded WETH — unwrapping to ETH.")
+            try:
+                w3 = self.wallet_provider._web3
+                weth = w3.eth.contract(address=Web3.to_checksum_address(weth_addr), abi=WETH_ABI)
+                tx = self.wallet_provider.send_transaction(
+                    {"to": Web3.to_checksum_address(weth_addr),
+                     "data": weth.encode_abi("withdraw", args=[int(stranded * 1e18)]),
+                     "value": 0}
+                )
+                if self._tx_succeeded(self.wallet_provider.wait_for_transaction_receipt(tx)):
+                    logger.info(f"[Aave] Unwrapped {stranded:.6f} WETH → ETH on startup.")
+                    self._balance_cache.pop(NATIVE_ETH, None)
+                    self._balance_cache.pop(weth_addr, None)
+                else:
+                    logger.error("[Aave] Startup WETH unwrap failed.")
+            except Exception as e:
+                logger.error(f"[Aave] Startup WETH unwrap error: {e}")
         self._notify(
             f"🤖 <b>Sentinel-Alpha started</b>\n"
             f"Network: {NETWORK_ID} | DRY_RUN: {DRY_RUN}\n"

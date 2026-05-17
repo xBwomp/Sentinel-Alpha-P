@@ -44,19 +44,25 @@ def load_jsonl(path):
 
 def pair_trades(trades):
     """
-    Pair BUY→SELL sequences into round trips.
-    Returns (pairs, open_position) where pairs is a list of
-    {'open': trade_record, 'close': trade_record}.
+    Pair BUY→SELL sequences into round trips, grouped by trading pair.
+    Returns (pairs, open_positions) where:
+      - pairs is a list of {'pair': str, 'open': trade_record, 'close': trade_record}
+      - open_positions is a dict of pair_name -> open BUY trade record
     """
-    pairs = []
-    open_buy = None
+    by_pair = {}
     for t in sorted(trades, key=lambda x: x["timestamp"]):
-        if t["signal"] == "BUY" and open_buy is None:
-            open_buy = t
-        elif t["signal"] == "SELL" and open_buy is not None:
-            pairs.append({"open": open_buy, "close": t})
-            open_buy = None
-    return pairs, open_buy
+        name = t.get("pair", "unknown")
+        if name not in by_pair:
+            by_pair[name] = {"open": None, "pairs": []}
+        if t["signal"] == "BUY" and by_pair[name]["open"] is None:
+            by_pair[name]["open"] = t
+        elif t["signal"] == "SELL" and by_pair[name]["open"] is not None:
+            by_pair[name]["pairs"].append({"pair": name, "open": by_pair[name]["open"], "close": t})
+            by_pair[name]["open"] = None
+
+    pairs = [p for group in by_pair.values() for p in group["pairs"]]
+    open_positions = {name: group["open"] for name, group in by_pair.items() if group["open"] is not None}
+    return pairs, open_positions
 
 
 def pair_return(pair):
@@ -154,7 +160,7 @@ def weekly_report(trades, summaries, days=7):
     print(f"    Ignored (cap)      : {ignored_lim}")
 
     # --- Round-trip performance ---
-    pairs, open_pos = pair_trades(rt)
+    pairs, open_positions = pair_trades(rt)
     print(f"\n  Round-Trip Performance  ({len(pairs)} completed pairs)")
     if pairs:
         returns = [r for r in (pair_return(p) for p in pairs) if r is not None]
@@ -175,12 +181,13 @@ def weekly_report(trades, summaries, days=7):
     else:
         print("    No completed round trips yet.")
 
-    if open_pos:
-        age = datetime.now() - datetime.fromisoformat(open_pos["timestamp"])
-        print(
-            f"\n  Open Position: BUY at ratio {open_pos['ratio']:.4f} "
-            f"(BTC ${open_pos['btc_price']:,.0f}) — {int(age.total_seconds()//3600)}h ago"
-        )
+    if open_positions:
+        for pair_name, open_pos in open_positions.items():
+            age = datetime.now() - datetime.fromisoformat(open_pos["timestamp"])
+            print(
+                f"\n  Open Position [{pair_name}]: BUY at ratio {open_pos['ratio']:.4f} "
+                f"— {int(age.total_seconds()//3600)}h ago"
+            )
 
     # --- Portfolio value ---
     if rs:
@@ -282,11 +289,19 @@ def monthly_report(trades, summaries):
     # --- All-time pair performance ---
     all_pairs, _ = pair_trades(trades)
     if all_pairs:
-        all_returns = [r for r in (pair_return(p) for p in all_pairs) if r is not None]
-        wins = sum(1 for r in all_returns if r > 0)
         print(f"\n  All-Time Stats  ({len(all_pairs)} completed round trips)")
-        print(f"    Win rate   : {wins/len(all_returns)*100:.1f}%")
-        print(f"    Avg return : {_pct(sum(all_returns)/len(all_returns))}")
+        by_pair_name = {}
+        for p in all_pairs:
+            by_pair_name.setdefault(p["pair"], []).append(p)
+        for pair_name, group in sorted(by_pair_name.items()):
+            returns = [r for r in (pair_return(p) for p in group) if r is not None]
+            if not returns:
+                continue
+            wins = sum(1 for r in returns if r > 0)
+            print(f"    [{pair_name}]  {len(returns)} trips  |  "
+                  f"win rate {wins/len(returns)*100:.1f}%  |  "
+                  f"avg {_pct(sum(returns)/len(returns))}  |  "
+                  f"best {_pct(max(returns))}  worst {_pct(min(returns))}")
 
 
 # ---------------------------------------------------------------------------

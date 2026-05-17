@@ -1,4 +1,6 @@
 .env
+.env.bak
+.env.*
 *.json
 *.txt
 !requirements.txt

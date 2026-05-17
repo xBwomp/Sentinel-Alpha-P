@@ -219,6 +219,7 @@ def get_balances(address):
     eth_balance = 0.0
     cbbtc_balance = 0.0
     cbeth_balance = 0.0
+    weth_balance = 0.0
     try:
         rpc_url = RPC_URLS.get(NETWORK_ID, RPC_URLS["base-mainnet"])
         w3 = Web3(Web3.HTTPProvider(rpc_url))
@@ -240,10 +241,12 @@ def get_balances(address):
             if cbeth_addr:
                 cbeth_balance = erc20_balance(cbeth_addr)
 
+            weth_balance = erc20_balance(WETH_ADDRESS_MAINNET)
+
     except Exception as e:
         print(f"Error fetching balances: {e}")
 
-    result = (eth_balance, cbbtc_balance, cbeth_balance)
+    result = (eth_balance, cbbtc_balance, cbeth_balance, weth_balance)
     _balance_cache["data"] = result
     _balance_cache["ts"] = time.time()
     return result
@@ -423,7 +426,7 @@ def get_explanation(z_score, z_points, coint_p=None, pair_name="BTC/ETH"):
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     address = get_wallet_address()
-    eth_bal, btc_bal, cbeth_bal = get_balances(address)
+    eth_bal, btc_bal, cbeth_bal, weth_bal = get_balances(address)
     logs, pairs_data, btc_p, eth_p, cbeth_p = parse_logs()
 
     coint_p_threshold = float(os.getenv("COINT_P_THRESHOLD", 0.25))
@@ -470,6 +473,7 @@ async def index(request: Request):
     start_date, start_usd = get_starting_balance()
     current_usd = (
         eth_bal * eth_p
+        + weth_bal * eth_p
         + btc_bal * btc_p
         + cbeth_bal * cbeth_p
         + (aave["aweth_balance"] * eth_p if aave["enabled"] else 0)

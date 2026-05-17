@@ -45,6 +45,9 @@ Two main files: `main.py` (trading agent) and `dashboard.py` (FastAPI web dashbo
 |---|---|---|---|
 | BTC/ETH | cbBTC (ERC-20) | native ETH | all |
 | cbETH/ETH | cbETH (ERC-20) | native ETH | base-mainnet only |
+| wstETH/ETH | wstETH (ERC-20) | native ETH | base-mainnet only |
+
+Capital is split 50/50 between cbETH/ETH and wstETH/ETH.
 
 Capital is split equally between enabled pairs.
 
@@ -66,10 +69,14 @@ Capital is split equally between enabled pairs.
 | `DAILY_STOP_LOSS_PCT` | `0.05` | Max daily drawdown before halting |
 | `ADAPTIVE_THRESHOLD_WINDOW` | `12` | Recent price points for vol-regime detection |
 | `COINT_P_THRESHOLD` | `0.25` | Max p-value to consider a pair cointegrated |
+| `MIN_EFFECTIVE_THRESHOLD` | `1.5` | Hard floor on adaptive Z-score threshold (prevents trading below slippage cost) |
+| `SLIPPAGE_GUARD_PCT` | `0.8` | Min expected mean-reversion gain (%) before allowing a trade |
+| `STOP_LOSS_WARN_PCT` | `0.04` | Send Telegram warning when daily drawdown exceeds this (before the 5% halt) |
+| `COOLDOWN_MINUTES` | `90` | Per-pair cooldown between trades in minutes |
 | `AAVE_ENABLED` | `false` | Enable idle ETH yield via Aave V3 |
 | `AAVE_POOL_ADDRESS` | `0xA238...` | Aave V3 Pool proxy on Base mainnet |
 | `AAVE_AWETH_ADDRESS` | `0xD4a0...` | aWETH token address on Base mainnet |
-| `AAVE_ETH_RESERVE` | `0.001` | ETH kept liquid (not deposited) for gas |
+| `AAVE_ETH_RESERVE` | `0.005` | ETH kept liquid (not deposited) for gas |
 | `AAVE_MIN_DEPOSIT` | `0.005` | Min ETH idle before depositing to Aave |
 | `TELEGRAM_BOT_TOKEN` | — | Telegram bot token from @BotFather |
 | `TELEGRAM_CHAT_ID` | — | Telegram chat ID to receive notifications |
