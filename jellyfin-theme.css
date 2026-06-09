@@ -1,0 +1,571 @@
+/*
+ * Silver Screen — Jellyfin Custom Theme
+ *
+ * Aesthetic: Modern dark UI with Art Deco / classic Hollywood cinema accents.
+ * Palette: Deep black backgrounds, warm gold (#c8a951) highlights,
+ *          ivory text — high contrast for couch/TV viewing.
+ *
+ * HOW TO INSTALL
+ * ──────────────
+ * 1. Open Jellyfin → Admin Dashboard → General
+ * 2. Scroll to "Custom CSS" and paste the entire contents of this file
+ * 3. Save — no restart needed
+ *
+ * Tested against Jellyfin 10.9.x web client.
+ */
+
+/* ─── Design Tokens ──────────────────────────────────────────────────────── */
+:root {
+    --ss-black:        #080808;
+    --ss-surface:      #111111;
+    --ss-surface-2:    #1a1a1a;
+    --ss-surface-3:    #242424;
+    --ss-border:       #2e2e2e;
+    --ss-gold:         #c8a951;
+    --ss-gold-light:   #e2c97e;
+    --ss-gold-dim:     #8a7035;
+    --ss-ivory:        #f2ead8;
+    --ss-text:         #e8e0cc;
+    --ss-text-muted:   #9e9484;
+    --ss-accent-red:   #8b2e2e;   /* vintage marquee red for badges */
+    --ss-radius:       6px;
+    --ss-radius-card:  4px;
+    --ss-transition:   0.18s ease;
+    --ss-font-heading: 'Georgia', 'Times New Roman', serif;
+    --ss-font-ui:      'Segoe UI', system-ui, sans-serif;
+}
+
+/* ─── Global Reset ───────────────────────────────────────────────────────── */
+body,
+.layout-page,
+#itemDetailPage {
+    background-color: var(--ss-black) !important;
+    color: var(--ss-text) !important;
+    font-family: var(--ss-font-ui) !important;
+    font-size: 16px !important;
+}
+
+/* Subtle film-strip left border on the whole app */
+body::before {
+    content: '';
+    display: block;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 3px;
+    height: 100vh;
+    background: linear-gradient(
+        to bottom,
+        transparent 0%,
+        var(--ss-gold) 20%,
+        var(--ss-gold) 80%,
+        transparent 100%
+    );
+    opacity: 0.5;
+    pointer-events: none;
+    z-index: 9999;
+}
+
+/* ─── Navigation / Sidebar ───────────────────────────────────────────────── */
+.navDrawerContent,
+.mainDrawer,
+.mainDrawer-backdrop + .mainDrawer {
+    background-color: var(--ss-surface) !important;
+    border-right: 1px solid var(--ss-border) !important;
+}
+
+/* App logo area */
+.headerLogo,
+.appLogo {
+    filter: brightness(1.15) sepia(0.3) saturate(1.4) !important;
+}
+
+/* Sidebar nav items */
+.navMenuOption {
+    color: var(--ss-text-muted) !important;
+    font-size: 0.95rem !important;
+    letter-spacing: 0.04em !important;
+    transition: color var(--ss-transition), background var(--ss-transition) !important;
+}
+
+.navMenuOption:hover,
+.navMenuOption.selected {
+    color: var(--ss-gold) !important;
+    background-color: rgba(200, 169, 81, 0.08) !important;
+}
+
+.navMenuOption.selected::before {
+    content: '';
+    display: block;
+    position: absolute;
+    left: 0;
+    top: 15%;
+    height: 70%;
+    width: 3px;
+    background: var(--ss-gold);
+    border-radius: 0 2px 2px 0;
+}
+
+/* ─── Top Header Bar ─────────────────────────────────────────────────────── */
+.skinHeader,
+.headerTop,
+header {
+    background-color: rgba(8, 8, 8, 0.95) !important;
+    border-bottom: 1px solid var(--ss-border) !important;
+    backdrop-filter: blur(8px) !important;
+}
+
+/* Search input */
+.headerSearchInput,
+input[type="text"].headerSearchInput {
+    background-color: var(--ss-surface-2) !important;
+    border: 1px solid var(--ss-border) !important;
+    color: var(--ss-text) !important;
+    border-radius: var(--ss-radius) !important;
+    font-size: 1rem !important;
+    padding: 8px 14px !important;
+    transition: border-color var(--ss-transition) !important;
+}
+
+.headerSearchInput:focus {
+    border-color: var(--ss-gold) !important;
+    outline: none !important;
+    box-shadow: 0 0 0 2px rgba(200, 169, 81, 0.2) !important;
+}
+
+/* User menu icon */
+.headerUserButton .material-icons,
+.headerButton .material-icons {
+    color: var(--ss-text-muted) !important;
+    transition: color var(--ss-transition) !important;
+}
+
+.headerButton:hover .material-icons {
+    color: var(--ss-gold) !important;
+}
+
+/* ─── Section / Page Headings ────────────────────────────────────────────── */
+h1, h2, h3,
+.sectionTitle,
+.sectionTitle a,
+.listItem-mediaInfo,
+.detailPageContent h3 {
+    font-family: var(--ss-font-heading) !important;
+    color: var(--ss-ivory) !important;
+    letter-spacing: 0.06em !important;
+}
+
+h2.sectionTitle,
+.sectionTitle {
+    font-size: 1.25rem !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.12em !important;
+    border-bottom: 1px solid var(--ss-gold-dim) !important;
+    padding-bottom: 6px !important;
+    margin-bottom: 14px !important;
+}
+
+/* "View All" links next to section titles */
+.sectionTitleLink {
+    color: var(--ss-gold) !important;
+    font-size: 0.8rem !important;
+    letter-spacing: 0.08em !important;
+}
+
+/* ─── Media Cards ────────────────────────────────────────────────────────── */
+.card {
+    border-radius: var(--ss-radius-card) !important;
+    transition: transform var(--ss-transition), box-shadow var(--ss-transition) !important;
+    overflow: hidden !important;
+}
+
+.card:hover {
+    transform: translateY(-4px) scale(1.02) !important;
+    box-shadow:
+        0 8px 32px rgba(0, 0, 0, 0.7),
+        0 0 0 1px var(--ss-gold-dim) !important;
+    z-index: 10 !important;
+}
+
+.cardBox {
+    background-color: var(--ss-surface-2) !important;
+    border: 1px solid var(--ss-border) !important;
+    border-radius: var(--ss-radius-card) !important;
+}
+
+/* Card title text */
+.cardText,
+.cardFooter .cardText {
+    color: var(--ss-text) !important;
+    font-size: 0.92rem !important;
+    font-weight: 500 !important;
+    letter-spacing: 0.02em !important;
+}
+
+.cardText-secondary {
+    color: var(--ss-text-muted) !important;
+    font-size: 0.8rem !important;
+}
+
+/* Overlay shown on hover */
+.cardOverlayContainer {
+    background: linear-gradient(
+        to top,
+        rgba(8, 8, 8, 0.92) 0%,
+        rgba(8, 8, 8, 0.4) 50%,
+        transparent 100%
+    ) !important;
+}
+
+/* Play button circle on card hover */
+.cardOverlayFab,
+.cardOverlayFab-primary {
+    background-color: var(--ss-gold) !important;
+    color: var(--ss-black) !important;
+    box-shadow: 0 2px 12px rgba(200, 169, 81, 0.5) !important;
+}
+
+.cardOverlayFab:hover {
+    background-color: var(--ss-gold-light) !important;
+}
+
+/* Progress bar under card (watched %) */
+.itemProgressBar,
+.cardProgressBar {
+    background-color: var(--ss-border) !important;
+    height: 3px !important;
+    border-radius: 2px !important;
+}
+
+.itemProgressBar-foreground,
+.cardProgressBar div {
+    background: linear-gradient(90deg, var(--ss-gold-dim), var(--ss-gold)) !important;
+    border-radius: 2px !important;
+}
+
+/* ─── Buttons ────────────────────────────────────────────────────────────── */
+.raised,
+button.raised,
+.emby-button.raised {
+    background-color: var(--ss-gold) !important;
+    color: var(--ss-black) !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.06em !important;
+    text-transform: uppercase !important;
+    border-radius: var(--ss-radius) !important;
+    border: none !important;
+    padding: 10px 22px !important;
+    font-size: 0.9rem !important;
+    transition: background-color var(--ss-transition), box-shadow var(--ss-transition) !important;
+}
+
+.raised:hover {
+    background-color: var(--ss-gold-light) !important;
+    box-shadow: 0 4px 18px rgba(200, 169, 81, 0.4) !important;
+}
+
+/* Ghost / outline buttons */
+.button-flat,
+.emby-button:not(.raised) {
+    color: var(--ss-gold) !important;
+    border-color: var(--ss-gold-dim) !important;
+}
+
+.button-flat:hover {
+    background-color: rgba(200, 169, 81, 0.1) !important;
+}
+
+/* Icon buttons (shuffle, repeat, etc.) */
+.paper-icon-button-light {
+    color: var(--ss-text-muted) !important;
+}
+
+.paper-icon-button-light:hover {
+    color: var(--ss-gold) !important;
+}
+
+/* ─── Detail Page (Movie / Show page) ────────────────────────────────────── */
+.detailPagePrimaryContainer {
+    background: linear-gradient(
+        to bottom,
+        rgba(8, 8, 8, 0.0) 0%,
+        rgba(8, 8, 8, 0.85) 60%,
+        var(--ss-black) 100%
+    ) !important;
+}
+
+/* Title on detail page */
+.itemName,
+h1.itemName {
+    font-family: var(--ss-font-heading) !important;
+    font-size: clamp(1.8rem, 4vw, 3.2rem) !important;
+    color: var(--ss-ivory) !important;
+    text-shadow: 0 2px 12px rgba(0, 0, 0, 0.9) !important;
+    letter-spacing: 0.04em !important;
+}
+
+/* Tagline / original title */
+.tagline {
+    color: var(--ss-gold) !important;
+    font-style: italic !important;
+    font-family: var(--ss-font-heading) !important;
+    font-size: 1.1rem !important;
+    letter-spacing: 0.06em !important;
+    opacity: 0.9 !important;
+}
+
+/* Ratings / year / runtime chips */
+.mediaInfoItem,
+.itemMiscInfo .mediaInfoItem {
+    background-color: var(--ss-surface-3) !important;
+    color: var(--ss-text-muted) !important;
+    border: 1px solid var(--ss-border) !important;
+    border-radius: 3px !important;
+    padding: 2px 8px !important;
+    font-size: 0.82rem !important;
+    letter-spacing: 0.05em !important;
+}
+
+/* Genre tags */
+.genreItem,
+.itemGenres a {
+    color: var(--ss-gold) !important;
+    border-bottom: 1px solid var(--ss-gold-dim) !important;
+    padding-bottom: 1px !important;
+    font-size: 0.88rem !important;
+    text-decoration: none !important;
+    letter-spacing: 0.04em !important;
+    transition: color var(--ss-transition) !important;
+}
+
+.genreItem:hover,
+.itemGenres a:hover {
+    color: var(--ss-gold-light) !important;
+}
+
+/* Overview / description text */
+.overview {
+    color: var(--ss-text) !important;
+    font-size: 1.05rem !important;
+    line-height: 1.75 !important;
+    max-width: 72ch !important;
+}
+
+/* Cast / crew section */
+.personCard .cardText {
+    color: var(--ss-text) !important;
+}
+
+.personCard .cardText-secondary {
+    color: var(--ss-gold-dim) !important;
+    font-style: italic !important;
+}
+
+/* ─── Video Player ───────────────────────────────────────────────────────── */
+.osdTitle {
+    font-family: var(--ss-font-heading) !important;
+    font-size: 1.4rem !important;
+    color: var(--ss-ivory) !important;
+    letter-spacing: 0.06em !important;
+    text-shadow: 0 1px 8px rgba(0, 0, 0, 0.9) !important;
+}
+
+/* Playback progress bar */
+.progressrain,
+.sliderContainer .mdl-slider::-webkit-slider-runnable-track {
+    background-color: var(--ss-border) !important;
+}
+
+.sliderBubble,
+.nowPlayingBar .sliderBubbleText {
+    background-color: var(--ss-surface) !important;
+    color: var(--ss-gold) !important;
+    border: 1px solid var(--ss-gold-dim) !important;
+}
+
+/* Chapter marker on scrub bar */
+.chapterThumb {
+    border: 1px solid var(--ss-gold-dim) !important;
+    border-radius: 2px !important;
+}
+
+/* Transport control icons */
+.nowPlayingBar .paper-icon-button-light,
+.osdControls .paper-icon-button-light {
+    color: var(--ss-text) !important;
+}
+
+.nowPlayingBar .paper-icon-button-light:hover {
+    color: var(--ss-gold) !important;
+}
+
+/* ─── Now Playing Bar (bottom) ───────────────────────────────────────────── */
+.nowPlayingBar {
+    background-color: rgba(8, 8, 8, 0.96) !important;
+    border-top: 1px solid var(--ss-border) !important;
+    backdrop-filter: blur(12px) !important;
+}
+
+.nowPlayingBarText {
+    color: var(--ss-text) !important;
+}
+
+/* ─── Dialogs / Modals ───────────────────────────────────────────────────── */
+.dialogContainer .dialog,
+.focuscontainer-dialog {
+    background-color: var(--ss-surface) !important;
+    border: 1px solid var(--ss-border) !important;
+    border-radius: var(--ss-radius) !important;
+    color: var(--ss-text) !important;
+    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.8) !important;
+}
+
+.dialogHeader {
+    border-bottom: 1px solid var(--ss-gold-dim) !important;
+    color: var(--ss-ivory) !important;
+    font-family: var(--ss-font-heading) !important;
+    letter-spacing: 0.06em !important;
+}
+
+/* ─── Form Inputs ────────────────────────────────────────────────────────── */
+.emby-input,
+input[type="text"],
+input[type="email"],
+input[type="password"],
+select.emby-select,
+textarea.emby-textarea {
+    background-color: var(--ss-surface-2) !important;
+    border: 1px solid var(--ss-border) !important;
+    border-radius: var(--ss-radius) !important;
+    color: var(--ss-text) !important;
+    font-size: 1rem !important;
+    padding: 10px 14px !important;
+    transition: border-color var(--ss-transition) !important;
+}
+
+.emby-input:focus,
+input:focus,
+select:focus,
+textarea:focus {
+    border-color: var(--ss-gold) !important;
+    box-shadow: 0 0 0 2px rgba(200, 169, 81, 0.18) !important;
+    outline: none !important;
+}
+
+/* Input labels */
+.inputLabel,
+label.inputLabel {
+    color: var(--ss-text-muted) !important;
+    font-size: 0.85rem !important;
+    letter-spacing: 0.06em !important;
+    text-transform: uppercase !important;
+}
+
+/* ─── Badges / Tags ──────────────────────────────────────────────────────── */
+.countBadge,
+.badge {
+    background-color: var(--ss-gold) !important;
+    color: var(--ss-black) !important;
+    font-weight: 700 !important;
+    font-size: 0.72rem !important;
+    letter-spacing: 0.04em !important;
+    border-radius: 10px !important;
+}
+
+/* "NEW" / "HD" / rating badges on card */
+.cardImageContainer .overlayText,
+.cardText-rightlabel {
+    background-color: rgba(8, 8, 8, 0.85) !important;
+    color: var(--ss-gold) !important;
+    border: 1px solid var(--ss-gold-dim) !important;
+    font-size: 0.7rem !important;
+    letter-spacing: 0.07em !important;
+    padding: 1px 5px !important;
+    border-radius: 2px !important;
+}
+
+/* ─── Scrollbar ──────────────────────────────────────────────────────────── */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: var(--ss-surface);
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--ss-border);
+    border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--ss-gold-dim);
+}
+
+/* ─── Home Page Sections ─────────────────────────────────────────────────── */
+.homeSectionsContainer {
+    background-color: var(--ss-black) !important;
+}
+
+/* Featured hero banner */
+.backdropImage,
+.backdropContainer {
+    opacity: 0.35 !important;
+    filter: grayscale(20%) !important;
+}
+
+/* Gradient over backdrop */
+.detailPagePrimaryContainer::before,
+.backdropContainer::after {
+    background: linear-gradient(
+        135deg,
+        rgba(8, 8, 8, 0.9) 0%,
+        rgba(8, 8, 8, 0.4) 100%
+    ) !important;
+}
+
+/* ─── Library Grid ───────────────────────────────────────────────────────── */
+.itemsContainer {
+    gap: 14px !important;
+}
+
+/* ─── Tabs (inside detail pages) ────────────────────────────────────────── */
+.emby-tabs-button {
+    color: var(--ss-text-muted) !important;
+    font-size: 0.9rem !important;
+    letter-spacing: 0.08em !important;
+    text-transform: uppercase !important;
+    transition: color var(--ss-transition) !important;
+}
+
+.emby-tabs-button.is-active,
+.emby-tabs-button[aria-selected="true"] {
+    color: var(--ss-gold) !important;
+    border-bottom: 2px solid var(--ss-gold) !important;
+}
+
+/* ─── Activity / Notifications ───────────────────────────────────────────── */
+.activityItem {
+    border-bottom: 1px solid var(--ss-border) !important;
+    color: var(--ss-text) !important;
+}
+
+/* ─── Closing ─────────────────────────────────────────────────────────────
+ * Art Deco rule — a pair of gold rules flanking the site footer
+ * ──────────────────────────────────────────────────────────────────────── */
+.pageTabContent::before {
+    content: '';
+    display: block;
+    height: 1px;
+    background: linear-gradient(
+        to right,
+        transparent 0%,
+        var(--ss-gold-dim) 25%,
+        var(--ss-gold) 50%,
+        var(--ss-gold-dim) 75%,
+        transparent 100%
+    );
+    margin-bottom: 24px;
+    opacity: 0.6;
+}
